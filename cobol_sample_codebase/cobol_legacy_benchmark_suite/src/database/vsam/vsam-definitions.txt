@@ -1,0 +1,100 @@
+*********************************************************************
+* VSAM DEFINITIONS FOR INVESTMENT PORTFOLIO MANAGEMENT SYSTEM
+* VERSION: 1.0
+* DATE: 2024
+*********************************************************************
+
+*--------------------------------------------------------------------
+* PORTFOLIO MASTER FILE (PORTMSTR)
+*--------------------------------------------------------------------
+FILE NAME:        PORTMSTR
+ORGANIZATION:     KSDS
+RECORD FORMAT:    FIXED
+RECORD LENGTH:    400
+KEY LENGTH:       12
+KEY POSITION:     1
+CI SIZE:          4096
+FREESPACE:        CI-20,CA-20
+SHARE OPTIONS:    (2,3)
+RECOVERY:         RECOVERY
+BUFFER SPACE:     65536
+
+* Key Structure:
+* - Portfolio ID (8 bytes)
+* - Account Type (2 bytes)
+* - Branch ID (2 bytes)
+
+*--------------------------------------------------------------------
+* TRANSACTION HISTORY FILE (TRANHIST)
+*--------------------------------------------------------------------
+FILE NAME:        TRANHIST
+ORGANIZATION:     KSDS
+RECORD FORMAT:    FIXED
+RECORD LENGTH:    300
+KEY LENGTH:       20
+KEY POSITION:     1
+CI SIZE:          4096
+FREESPACE:        CI-10,CA-10
+SHARE OPTIONS:    (2,3)
+RECOVERY:         RECOVERY
+BUFFER SPACE:     65536
+
+* Key Structure:
+* - Transaction Date (8 bytes, YYYYMMDD)
+* - Transaction Time (6 bytes, HHMMSS)
+* - Portfolio ID (8 bytes)
+* - Sequence Number (6 bytes)
+
+*--------------------------------------------------------------------
+* POSITION HISTORY FILE (POSHIST)
+*--------------------------------------------------------------------
+FILE NAME:        POSHIST
+ORGANIZATION:     KSDS
+RECORD FORMAT:    FIXED
+RECORD LENGTH:    350
+KEY LENGTH:       18
+KEY POSITION:     1
+CI SIZE:          4096
+FREESPACE:        CI-10,CA-10
+SHARE OPTIONS:    (2,3)
+RECOVERY:         RECOVERY
+BUFFER SPACE:     65536
+
+* Key Structure:
+* - Portfolio ID (8 bytes)
+* - Position Date (8 bytes, YYYYMMDD)
+* - Investment ID (10 bytes)
+
+*--------------------------------------------------------------------
+* IDCAMS DEFINE CLUSTER PARAMETERS
+*--------------------------------------------------------------------
+* Sample IDCAMS commands for file creation are provided below.
+* Adjust space allocations based on expected file sizes.
+
+DEFINE CLUSTER                                        -
+       (NAME(PORTFOLIO.MASTER.FILE)                   -
+        VOLUMES(VSAM01)                              -
+        CYLINDERS(100 20)                            -
+        KEYS(12 0)                                   -
+        RECORDSIZE(400 400)                          -
+        FREESPACE(20 20)                             -
+        INDEXED                                      -
+        SHAREOPTIONS(2 3))                           -
+       DATA                                          -
+       (NAME(PORTFOLIO.MASTER.FILE.DATA))            -
+       INDEX                                         -
+       (NAME(PORTFOLIO.MASTER.FILE.INDEX))
+
+* Similar DEFINE CLUSTER commands would be needed for TRANHIST
+* and POSHIST files (not shown for brevity)
+
+*--------------------------------------------------------------------
+* NOTES:
+*--------------------------------------------------------------------
+* 1. All files use SHARE OPTIONS(2,3) to allow read while batch update
+* 2. FREESPACE allocations optimized for update patterns:
+*    - PORTMSTR: Higher (20,20) due to frequent updates
+*    - TRANHIST/POSHIST: Lower (10,10) as mainly sequential writes
+* 3. Buffer space set to 65536 for optimal performance
+* 4. All files defined as recoverable for backup/restore capability
+********************************************************************* 

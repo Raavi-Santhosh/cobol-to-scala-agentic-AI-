@@ -1,0 +1,30 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. MAINPGM.
+       AUTHOR. SYSTEM.
+       
+       ENVIRONMENT DIVISION.
+       CONFIGURATION SECTION.
+       
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       
+       COPY WORKAREA.
+       COPY CALCDATA.
+       
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           DISPLAY 'MAIN PROGRAM STARTING'.
+           
+           INITIALIZE WS-RECORD.
+           MOVE 'TEST001' TO WS-RECORD-ID.
+           MOVE 100 TO WS-RECORD-AMOUNT.
+           MOVE '2024-01-15' TO WS-RECORD-DATE.
+           
+           CALL 'CALCSUBR' USING WS-RECORD.
+           
+           DISPLAY 'RECORD ID: ' WS-RECORD-ID.
+           DISPLAY 'AMOUNT: ' WS-RECORD-AMOUNT.
+           DISPLAY 'CALCULATED VALUE: ' WS-CALC-VALUE.
+           
+           DISPLAY 'MAIN PROGRAM ENDING'.
+           STOP RUN.

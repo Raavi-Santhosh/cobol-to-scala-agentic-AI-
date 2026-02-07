@@ -1,0 +1,24 @@
+# Run outputs and local state
+outputs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+.eggs/
+*.egg-info/
+*.egg
+
+# Generated artifacts (outputs/ already ignored; keep root clean)
+# *.docx
+.scala/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo

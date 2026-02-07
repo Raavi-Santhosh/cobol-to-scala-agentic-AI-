@@ -1,0 +1,10 @@
+-- DB2 Plan Definition for Portfolio System
+BIND PLAN PORTPLAN
+     PKLIST(*.PORTPKG.*)
+     ACTION(REPLACE)
+     RETAIN
+     VALIDATE(RUN)
+     ISOLATION(CS)
+     ACQUIRE(USE)
+     RELEASE(COMMIT)
+     EXPLAIN(YES); 

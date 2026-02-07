@@ -1,0 +1,101 @@
+PRINT NOGEN
+INQSET   DFHMSD TYPE=MAP,MODE=INOUT,LANG=COBOL,STORAGE=AUTO,              *
+               TIOAPFX=YES,DSATTS=(COLOR,HILIGHT),MAPATTS=(COLOR,HILIGHT)
+*****************************************************************
+* Main Menu Map                                                   *
+*****************************************************************
+MENMAP   DFHMDI SIZE=(24,80)
+         DFHMDF POS=(1,1),LENGTH=40,ATTRB=(PROT,BRT),                     *
+               INITIAL='Portfolio Management System'
+         DFHMDF POS=(3,1),LENGTH=20,ATTRB=(PROT),                         *
+               INITIAL='Select Option:'
+         DFHMDF POS=(5,3),LENGTH=40,ATTRB=(PROT),                         *
+               INITIAL='1. Portfolio Position Inquiry'
+         DFHMDF POS=(6,3),LENGTH=40,ATTRB=(PROT),                         *
+               INITIAL='2. Transaction History'
+         DFHMDF POS=(7,3),LENGTH=40,ATTRB=(PROT),                         *
+               INITIAL='3. Exit'
+OPTION   DFHMDF POS=(9,3),LENGTH=1,ATTRB=(UNPROT,NUM,IC)
+ERRMSG   DFHMDF POS=(23,1),LENGTH=78,ATTRB=(PROT,BRT),COLOR=RED
+*****************************************************************
+* Portfolio Position Map                                          *
+*****************************************************************
+POSMAP   DFHMDI SIZE=(24,80)
+         DFHMDF POS=(1,1),LENGTH=40,ATTRB=(PROT,BRT),                     *
+               INITIAL='Portfolio Position Inquiry'
+ACCTLBL  DFHMDF POS=(3,1),LENGTH=10,ATTRB=(PROT),                        *
+               INITIAL='Account:'
+ACCTIN   DFHMDF POS=(3,12),LENGTH=10,ATTRB=(UNPROT,IC)
+         DFHMDF POS=(3,23),LENGTH=1,ATTRB=(PROT)
+* Position Details
+FUNDLBL  DFHMDF POS=(5,1),LENGTH=10,ATTRB=(PROT),                        *
+               INITIAL='Fund ID:'
+FUNDOUT  DFHMDF POS=(5,12),LENGTH=6,ATTRB=(PROT),COLOR=TURQUOISE
+NAMELBL  DFHMDF POS=(5,20),LENGTH=10,ATTRB=(PROT),                       *
+               INITIAL='Fund Name:'
+NAMEOUT  DFHMDF POS=(5,31),LENGTH=30,ATTRB=(PROT),COLOR=TURQUOISE
+UNITLBL  DFHMDF POS=(7,1),LENGTH=10,ATTRB=(PROT),                        *
+               INITIAL='Units:'
+UNITOUT  DFHMDF POS=(7,12),LENGTH=15,ATTRB=(PROT),COLOR=TURQUOISE
+COSTLBL  DFHMDF POS=(9,1),LENGTH=15,ATTRB=(PROT),                        *
+               INITIAL='Cost Basis:'
+COSTOUT  DFHMDF POS=(9,17),LENGTH=15,ATTRB=(PROT),COLOR=TURQUOISE
+VALLBL   DFHMDF POS=(11,1),LENGTH=15,ATTRB=(PROT),                       *
+               INITIAL='Market Value:'
+VALOUT   DFHMDF POS=(11,17),LENGTH=15,ATTRB=(PROT),COLOR=TURQUOISE
+* Function Keys
+         DFHMDF POS=(22,1),LENGTH=79,ATTRB=(PROT),                       *
+               INITIAL='PF3=Exit  PF7=Previous  PF8=Next'
+POSMSG   DFHMDF POS=(23,1),LENGTH=78,ATTRB=(PROT,BRT),COLOR=RED
+*****************************************************************
+* Transaction History Map                                         *
+*****************************************************************
+HISMAP   DFHMDI SIZE=(24,80)
+         DFHMDF POS=(1,1),LENGTH=40,ATTRB=(PROT,BRT),                     *
+               INITIAL='Transaction History Inquiry'
+HISACCT  DFHMDF POS=(3,1),LENGTH=10,ATTRB=(PROT),                        *
+               INITIAL='Account:'
+HISAIN   DFHMDF POS=(3,12),LENGTH=10,ATTRB=(UNPROT,IC)
+         DFHMDF POS=(3,23),LENGTH=1,ATTRB=(PROT)
+* Column Headers
+         DFHMDF POS=(5,1),LENGTH=10,ATTRB=(PROT,BRT),                     *
+               INITIAL='Date'
+         DFHMDF POS=(5,12),LENGTH=4,ATTRB=(PROT,BRT),                     *
+               INITIAL='Type'
+         DFHMDF POS=(5,17),LENGTH=10,ATTRB=(PROT,BRT),                    *
+               INITIAL='Units'
+         DFHMDF POS=(5,28),LENGTH=10,ATTRB=(PROT,BRT),                    *
+               INITIAL='Price'
+         DFHMDF POS=(5,39),LENGTH=12,ATTRB=(PROT,BRT),                    *
+               INITIAL='Amount'
+* Data rows (10 rows of history)
+ROW1     DFHMDF POS=(7,1),LENGTH=65,ATTRB=(PROT),COLOR=TURQUOISE
+ROW2     DFHMDF POS=(8,1),LENGTH=65,ATTRB=(PROT),COLOR=TURQUOISE
+ROW3     DFHMDF POS=(9,1),LENGTH=65,ATTRB=(PROT),COLOR=TURQUOISE
+ROW4     DFHMDF POS=(10,1),LENGTH=65,ATTRB=(PROT),COLOR=TURQUOISE
+ROW5     DFHMDF POS=(11,1),LENGTH=65,ATTRB=(PROT),COLOR=TURQUOISE
+ROW6     DFHMDF POS=(12,1),LENGTH=65,ATTRB=(PROT),COLOR=TURQUOISE
+ROW7     DFHMDF POS=(13,1),LENGTH=65,ATTRB=(PROT),COLOR=TURQUOISE
+ROW8     DFHMDF POS=(14,1),LENGTH=65,ATTRB=(PROT),COLOR=TURQUOISE
+ROW9     DFHMDF POS=(15,1),LENGTH=65,ATTRB=(PROT),COLOR=TURQUOISE
+ROW10    DFHMDF POS=(16,1),LENGTH=65,ATTRB=(PROT),COLOR=TURQUOISE
+* Navigation
+         DFHMDF POS=(22,1),LENGTH=79,ATTRB=(PROT),                       *
+               INITIAL='PF3=Exit  PF7=Previous  PF8=Next'
+HISMSG   DFHMDF POS=(23,1),LENGTH=78,ATTRB=(PROT,BRT),COLOR=RED
+*****************************************************************
+* Error Message Map                                              *
+*****************************************************************
+ERRMAP   DFHMDI SIZE=(24,80)
+         DFHMDF POS=(1,1),LENGTH=40,ATTRB=(PROT,BRT),                     *
+               INITIAL='System Error'
+ERRCODE  DFHMDF POS=(3,1),LENGTH=10,ATTRB=(PROT),                        *
+               INITIAL='Error Code:'
+ERRCOUT  DFHMDF POS=(3,12),LENGTH=8,ATTRB=(PROT),COLOR=RED
+ERRDESC  DFHMDF POS=(5,1),LENGTH=10,ATTRB=(PROT),                        *
+               INITIAL='Details:'
+ERRDOUT  DFHMDF POS=(5,12),LENGTH=65,ATTRB=(PROT),COLOR=RED
+         DFHMDF POS=(22,1),LENGTH=79,ATTRB=(PROT),                       *
+               INITIAL='Press ENTER to continue'
+         DFHMSD TYPE=FINAL
+         END 
