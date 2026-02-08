@@ -14,8 +14,8 @@ pipeline_order:
 
 models:
   # Production (uncomment and comment out the line below for full quality, slower):
-  # agent_1: phi3:medium
-  agent_1: phi3:mini  # efficient small model, faster; use phi3:medium in production
+  agent_1: phi3:medium
+  # agent_1: phi3:mini  # efficient small model, faster; use phi3:medium in production
   agent_2: mixtral:8x7b
   agent_3: llama3.1:70b
   agent_4: mixtral:8x22b
