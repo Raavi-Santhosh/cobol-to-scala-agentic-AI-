@@ -1,0 +1,34 @@
+# Pipeline order and model mapping for COBOL Modernization Platform
+# Temperature 0 for all logic/design/code/validation agents
+
+# Target language for generated code: scala | python (agents 6-9 use this)
+target_language: scala
+
+pipeline_order:
+  - agent_1  # Discovery
+  - agent_2  # Dependency Graph
+  - agent_3  # Business Logic
+  - agent_4  # Technical Analysis
+  - agent_5  # Pseudocode
+  - agent_6  # Scala Design
+  - agent_7  # Scala Code
+  - agent_8  # Validation
+  - agent_9  # Documentation
+
+models:
+  agent_1: phi3:mini
+  agent_2: mixtral:8x7b
+  agent_3: llama3.1:70b
+  agent_4: mixtral:8x22b
+  agent_5: llama3.1:70b
+  agent_6: mixtral:8x22b
+  agent_7: codellama:34b
+  agent_8: mixtral:8x7b
+  agent_9: llama3.1:70b
+
+temperature: 0
+
+blocklist:
+  - "qwen"
+  - "chinese"
+
