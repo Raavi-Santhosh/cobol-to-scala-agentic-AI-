@@ -1,6 +1,8 @@
-"""Agent 3: Business Logic Extraction. WHAT does the system do for the business? No files, COBOL, Scala."""
-from pathlib import Path
+"""Agent 3: Business Logic Extraction. WHAT does the system do for the business?
+Output is minute-level so downstream agents understand clearly. JSON populated from LLM response."""
 import json
+import re
+from pathlib import Path
 
 from .base import BaseAgent, AgentContext, AgentResult
 from llm import generate, get_model_for_agent, get_temperature
@@ -8,20 +10,29 @@ from documents.writer import write_docx
 from documents.reader import read_docx_text, read_cobol_directory
 
 
-BUSINESS_LOGIC_PROMPT = """You are a senior business analyst.
-You do NOT care about: files, variables, performance, COBOL syntax.
+BUSINESS_LOGIC_PROMPT = """You are a senior business analyst. Document at a MINUTE level of detail so downstream agents can understand every rule and decision exactly.
 
-Your ONLY goal: Answer WHAT does the system do for the business?
+You do NOT care about: file names, variable names, performance, COBOL syntax.
+
+Your ONLY goal: Answer WHAT does the system do for the business? Be exhaustive and precise.
 
 Produce:
-- Business rules (numbered)
-- Decision logic (e.g. If X then Y)
-- Domain explanations
-- Edge-case rules
 
-Example style: "If employee type is CONTRACT then no tax is applied."
+1. Business Rules
+   - List EVERY business rule. Give each a unique ID (BR-01, BR-02, ...) and a full, unambiguous description.
+   - Example: "BR-01: If employee type is CONTRACT then no tax is applied to the payment."
 
-You MUST NOT: mention files, loops, COBOL, or Scala.
+2. Decision Logic
+   - List EVERY decision: condition and outcome. Use explicit "IF <condition> THEN <outcome>" or "WHEN X THEN Y".
+   - Example: "If record status is 'Y' then extra value is added to the calculated amount."
+
+3. Domain Explanations
+   - Define every domain term used (e.g. WS-RECORD, amount, status, multiplier). Explain what each means in business terms.
+
+4. Edge Cases
+   - List every edge case or exception with a concrete example. Example: "When status is not Y, extra value is ignored."
+
+You MUST NOT: mention files, loops, COBOL, or Scala. Use business language only.
 
 Format with these section titles on their own line:
 - Business Rules
@@ -29,7 +40,62 @@ Format with these section titles on their own line:
 - Domain Explanations
 - Edge Cases
 
-End with: ---END---"""
+End with: ---END---
+
+Then, on a new line, output a JSON block that downstream agents will parse. Use exactly this format (no other text around it):
+```json
+{"rules": [{"id": "BR-01", "description": "..."}], "decision_logic": [{"condition": "...", "outcome": "..."}], "domain_terms": [{"term": "...", "meaning": "..."}], "edge_cases": [{"description": "...", "example": "..."}]}
+```"""
+
+
+def _parse_json_block(text: str) -> dict | None:
+    """Extract JSON from ```json ... ``` block after ---END---."""
+    try:
+        if "---END---" in text:
+            text = text.split("---END---", 1)[1]
+        m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+        if m:
+            return json.loads(m.group(1).strip())
+        return None
+    except (json.JSONDecodeError, IndexError):
+        return None
+
+
+def _parse_fallback_rules(response: str) -> dict:
+    """If no JSON block, try to extract rules from section text."""
+    rules = []
+    decision_logic = []
+    edge_cases = []
+    domain_terms = []
+    section = None
+    for line in response.split("\n"):
+        if line.strip().startswith("- ") and not line.strip().startswith("-  "):
+            title = line.strip().lstrip("- ").strip()
+            if title == "Business Rules":
+                section = "rules"
+            elif title == "Decision Logic":
+                section = "decision_logic"
+            elif title == "Domain Explanations":
+                section = "domain"
+            elif title == "Edge Cases":
+                section = "edge"
+            else:
+                section = None
+            continue
+        if section == "rules" and line.strip():
+            desc = re.sub(r"^(?:BR-\d+[.:]\s*|\d+\.\s*)", "", line.strip()).strip() or line.strip()
+            if desc:
+                rules.append({"id": f"BR-{len(rules)+1:02d}", "description": desc})
+        elif section == "decision_logic" and line.strip() and not line.strip().startswith("-"):
+            decision_logic.append({"condition": line.strip(), "outcome": ""})
+        elif section == "edge" and line.strip() and not line.strip().startswith("-"):
+            edge_cases.append({"description": line.strip(), "example": ""})
+    return {
+        "rules": rules,
+        "decision_logic": decision_logic,
+        "domain_terms": domain_terms,
+        "edge_cases": edge_cases,
+    }
 
 
 class BusinessLogicAgent(BaseAgent):
@@ -53,7 +119,7 @@ class BusinessLogicAgent(BaseAgent):
             + "\n\n--- Dependency ---\n"
             + dep_text
             + "\n\n--- Dependency JSON ---\n"
-            + dep_json
+            + dep_json[:6000]
             + "\n\n--- Source (excerpts) ---\n"
             + source_preview[:20000]
         )
@@ -76,14 +142,26 @@ class BusinessLogicAgent(BaseAgent):
         if current_title or current_body:
             sections.append({"title": current_title or "Section", "body": "\n".join(current_body)})
         if not sections:
-            sections = [{"title": "Business Logic Specification", "body": response[:8000]}]
+            sections = [{"title": "Business Logic Specification", "body": response[:12000]}]
 
-        out_dir = Path(context.output_dir) / "business"
+        out_dir = Path(context.output_dir) / "03_business"
         out_dir.mkdir(parents=True, exist_ok=True)
         docx_path = out_dir / "03_Business_Logic_Specification.docx"
         write_docx(sections, docx_path, title="Business Logic Specification")
 
-        rules = {"rules": [], "decision_logic": [], "edge_cases": []}
+        parsed = _parse_json_block(response)
+        if parsed and isinstance(parsed, dict):
+            rules = {
+                "rules": parsed.get("rules", []),
+                "decision_logic": parsed.get("decision_logic", []),
+                "domain_terms": parsed.get("domain_terms", []),
+                "edge_cases": parsed.get("edge_cases", []),
+            }
+        else:
+            rules = _parse_fallback_rules(response)
+            if not rules.get("domain_terms"):
+                rules["domain_terms"] = []
+
         json_path = out_dir / "business_rules.json"
         with open(json_path, "w") as f:
             json.dump(rules, f, indent=2)

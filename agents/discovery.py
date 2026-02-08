@@ -207,7 +207,7 @@ class DiscoveryAgent(BaseAgent):
             {"title": "Call Linkages", "body": _section_call_linkages(call_linkages)},
         ]
 
-        out_dir = Path(context.output_dir) / "discovery"
+        out_dir = Path(context.output_dir) / "01_discovery"
         out_dir.mkdir(parents=True, exist_ok=True)
         docx_path = out_dir / "01_COBOL_Codebase_Overview.docx"
         write_docx(sections, docx_path, title="COBOL Codebase Overview")

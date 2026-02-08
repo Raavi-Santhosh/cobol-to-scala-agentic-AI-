@@ -62,7 +62,7 @@ class DocumentationAgent(BaseAgent):
         if not sections:
             sections = [{"title": "Scala Business and Technical Design", "body": response[:8000]}]
 
-        out_dir = Path(context.output_dir) / "documentation"
+        out_dir = Path(context.output_dir) / "09_documentation"
         out_dir.mkdir(parents=True, exist_ok=True)
         docx_path = out_dir / "07_Scala_Business_and_Technical_Design.docx"
         write_docx(sections, docx_path, title="Scala Business and Technical Design")

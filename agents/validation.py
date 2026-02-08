@@ -69,7 +69,7 @@ class ValidationAgent(BaseAgent):
         if not sections:
             sections = [{"title": "Parity and Validation Report", "body": response[:8000]}]
 
-        out_dir = Path(context.output_dir) / "validation"
+        out_dir = Path(context.output_dir) / "08_validation"
         out_dir.mkdir(parents=True, exist_ok=True)
         docx_path = out_dir / "08_Parity_and_Validation_Report.docx"
         write_docx(sections, docx_path, title="Parity and Validation Report")

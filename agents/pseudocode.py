@@ -62,7 +62,7 @@ class PseudocodeAgent(BaseAgent):
         if not sections:
             sections = [{"title": "Pseudocode (Language-Neutral)", "body": response[:8000]}]
 
-        out_dir = Path(context.output_dir) / "pseudocode"
+        out_dir = Path(context.output_dir) / "05_pseudocode"
         out_dir.mkdir(parents=True, exist_ok=True)
         docx_path = out_dir / "05_Pseudocode_Language_Neutral.docx"
         write_docx(sections, docx_path, title="Pseudocode (Language-Neutral)")

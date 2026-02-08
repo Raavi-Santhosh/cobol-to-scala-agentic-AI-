@@ -38,7 +38,7 @@ class ScalaCodeAgent(BaseAgent):
         model = get_model_for_agent(self.agent_id)
         response = generate(prompt, model=model, temperature=get_temperature(self.agent_id))
 
-        out_dir = Path(context.output_dir) / "scala_code"
+        out_dir = Path(context.output_dir) / "07_scala_code"
         out_dir.mkdir(parents=True, exist_ok=True)
         scala_dir = out_dir / "src" / "main" / "scala"
         scala_dir.mkdir(parents=True, exist_ok=True)
