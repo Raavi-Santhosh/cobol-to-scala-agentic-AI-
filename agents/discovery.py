@@ -276,20 +276,70 @@ def _parse_response_into_sections(response: str) -> dict[str, str]:
     return sections
 
 
-def _build_overview_from_parser(structure: dict, file_count: int) -> list[dict]:
-    """Build DOCX sections from parser output only (no LLM). Use when DISCOVERY_PARSER_ONLY=1."""
+def _structure_to_section_bodies(structure: dict) -> dict[str, str]:
+    """Build section bodies from structure (programs, copybooks, called_programs). Used only in parser-only mode."""
     programs_body = "\n".join(
         f"- {p['name']} ({p['file']})" for p in structure["programs"]
     ) if structure["programs"] else "None identified."
     copybooks_body = "\n".join(f"- {c}" for c in structure["copybooks"]) or "None."
     calls_body = "\n".join(f"- {c}" for c in structure["called_programs"]) or "None."
+    return {
+        "Programs": programs_body,
+        "Copybooks Used": copybooks_body,
+        "Called Programs": calls_body,
+    }
+
+
+def _parse_llm_merged_to_structure(merged: dict[str, str]) -> dict:
+    """Extract structured data from LLM merged sections so discovery.json matches the DOCX (same LLM source)."""
+    programs: list[dict] = []
+    copybooks: list[str] = []
+    called: list[str] = []
+    # Programs: e.g. "- PROGNAME (path/to/file.cbl)" or "PROGNAME - path" or "PROGNAME"
+    for line in (merged.get("Programs") or "").split("\n"):
+        line = line.strip()
+        if not line or line.lower().startswith("none"):
+            continue
+        line = line.lstrip("- ").strip()
+        m = re.match(r"^(\w+)\s*\((.+)\)\s*$", line)
+        if m:
+            programs.append({"name": m.group(1), "file": m.group(2).strip()})
+        elif re.match(r"^\w+\s+", line):
+            parts = line.split(None, 1)
+            programs.append({"name": parts[0], "file": parts[1].lstrip("- ()").strip() if len(parts) > 1 else ""})
+        elif line:
+            programs.append({"name": line, "file": ""})
+    # Copybooks Used: e.g. "- NAME" or "NAME"
+    for line in (merged.get("Copybooks Used") or "").split("\n"):
+        line = line.strip().lstrip("- ").strip()
+        if line and not line.lower().startswith("none"):
+            copybooks.append(line.split()[0] if line.split() else line)
+    copybooks = sorted(dict.fromkeys(copybooks))
+    # Called Programs: same
+    for line in (merged.get("Called Programs") or "").split("\n"):
+        line = line.strip().lstrip("- ").strip()
+        if line and not line.lower().startswith("none"):
+            called.append(line.split()[0] if line.split() else line)
+    called = sorted(dict.fromkeys(called))
+    batch = (merged.get("Batch vs CICS") or "").strip() or "Unknown"
+    return {
+        "programs": programs,
+        "copybooks": copybooks,
+        "called_programs": called,
+        "batch_or_cics": batch,
+    }
+
+
+def _build_overview_from_parser(structure: dict, file_count: int) -> list[dict]:
+    """Build DOCX sections from parser output only (no LLM). Use when DISCOVERY_PARSER_ONLY=1."""
+    bodies = _structure_to_section_bodies(structure)
     return [
-        {"title": "Programs", "body": programs_body},
+        {"title": "Programs", "body": bodies["Programs"]},
         {"title": "Batch vs CICS", "body": "Unknown (parser-only mode)."},
-        {"title": "Copybooks Used", "body": copybooks_body},
+        {"title": "Copybooks Used", "body": bodies["Copybooks Used"]},
         {"title": "Input/Output Files", "body": "None explicitly mentioned (parser-only)."},
         {"title": "Database Tables", "body": "None referenced (parser-only)."},
-        {"title": "Called Programs", "body": calls_body},
+        {"title": "Called Programs", "body": bodies["Called Programs"]},
     ]
 
 
@@ -341,11 +391,11 @@ class DiscoveryAgent(BaseAgent):
         cobol_files = read_cobol_directory(context.cobol_dir)
         if not cobol_files:
             logger.warning("No COBOL files found under %s", context.cobol_dir)
-        structure = _parse_cobol_structure(cobol_files)
 
         parser_only = os.environ.get("DISCOVERY_PARSER_ONLY", "").strip().lower() in ("1", "true", "yes")
         if parser_only:
             logger.info("Discovery: parser-only mode (DISCOVERY_PARSER_ONLY=1), skipping LLM")
+            structure = _parse_cobol_structure(cobol_files)
             sections_for_docx = _build_overview_from_parser(structure, len(cobol_files))
             out_dir = Path(context.output_dir) / "discovery"
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -402,15 +452,12 @@ class DiscoveryAgent(BaseAgent):
             all_sections.append(sections)
 
         merged = _merge_section_bodies(all_sections)
+        # DOCX and JSON both from LLM only: same source, so they stay in sync
         sections_for_docx = [
-            {"title": name, "body": merged.get(name, "")}
+            {"title": name, "body": merged.get(name, "") or "Not provided by model."}
             for name in DISCOVERY_SECTION_NAMES
-            if merged.get(name)
         ]
-        if not sections_for_docx:
-            sections_for_docx = [
-                {"title": "Codebase Overview", "body": "No structured sections parsed from LLM response."}
-            ]
+        llm_structure = _parse_llm_merged_to_structure(merged)
 
         out_dir = Path(context.output_dir) / "discovery"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -418,10 +465,10 @@ class DiscoveryAgent(BaseAgent):
         write_docx(sections_for_docx, docx_path, title="COBOL Codebase Overview")
 
         discovery = {
-            "programs": structure["programs"],
-            "copybooks": structure["copybooks"],
-            "called_programs": structure["called_programs"],
-            "batch_or_cics": "Unknown",
+            "programs": llm_structure["programs"],
+            "copybooks": llm_structure["copybooks"],
+            "called_programs": llm_structure["called_programs"],
+            "batch_or_cics": llm_structure["batch_or_cics"],
             "file_count": len(cobol_files),
             "chunk_count": len(chunks),
         }
