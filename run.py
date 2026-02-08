@@ -2,6 +2,8 @@
 """CLI: run full pipeline or single agent. Requires Ollama running with configured models."""
 import argparse
 import logging
+import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,6 +21,47 @@ from llm import get_model_for_agent
 
 
 AGENT_IDS = [f"agent_{i}" for i in range(1, 10)]
+
+AGENT_NAMES = {
+    "agent_1": "Discovery",
+    "agent_2": "Dependency Graph",
+    "agent_3": "Business Logic",
+    "agent_4": "Technical Analysis",
+    "agent_5": "Pseudocode",
+    "agent_6": "Scala Design",
+    "agent_7": "Scala Code",
+    "agent_8": "Validation",
+    "agent_9": "Documentation",
+}
+
+TOTAL_AGENTS = 9
+
+
+def _progress_bar(current: int, total: int, width: int = 30) -> str:
+    """Simple progress bar: [=======>     ] 3/9"""
+    if total <= 0:
+        return ""
+    filled = int(width * current / total)
+    bar = "=" * filled + ">" * (1 if filled < width else 0) + " " * (width - filled - 1)
+    return f"[{bar}] {current}/{total}"
+
+
+def _print_banner(run_id: str, cobol_dir: Path, output_root: Path, only_agent: str | None):
+    """Print startup banner."""
+    print()
+    print("=" * 60)
+    print("  COBOL Modernization Pipeline")
+    print("=" * 60)
+    print(f"  Run ID:      {run_id}")
+    print(f"  COBOL dir:   {cobol_dir}")
+    print(f"  Output dir:  {output_root}")
+    if only_agent:
+        print(f"  Mode:        Single agent ({only_agent} - {AGENT_NAMES.get(only_agent, only_agent)})")
+    else:
+        print(f"  Mode:        Full pipeline (agents 1–{TOTAL_AGENTS})")
+    print("=" * 60)
+    print()
+    sys.stdout.flush()
 
 
 def main():
@@ -57,8 +100,19 @@ def main():
         )
         state.artifact_paths["cobol_source"] = str(state.cobol_dir)
 
+    _print_banner(run_id, state.cobol_dir, output_root, args.agent)
+
     def agent_runner(agent_id: str, st: PipelineState) -> dict:
         from agents.base import AgentContext
+        step = int(agent_id.split("_")[1])
+        total = 1 if args.agent else TOTAL_AGENTS
+        name = AGENT_NAMES.get(agent_id, agent_id)
+        bar = _progress_bar(step, total)
+        print(f"  {bar}  Step {step}: {agent_id} — {name}")
+        print(f"         Running... (this may take a while for LLM calls)")
+        sys.stdout.flush()
+        t0 = time.perf_counter()
+
         agent = get_agent(agent_id)
         model = get_model_for_agent(agent_id)
         context = AgentContext(
@@ -68,6 +122,13 @@ def main():
             agent_id=agent_id,
         )
         result = agent.run(context)
+
+        elapsed = time.perf_counter() - t0
+        outputs = list(result.artifacts.keys())
+        print(f"         Done in {elapsed:.1f}s. Outputs: {', '.join(outputs)}")
+        print()
+        sys.stdout.flush()
+
         inputs_used = []
         contract = __import__("control_plane.contracts", fromlist=["get_contract"]).get_contract(agent_id)
         for inp in contract["required_inputs"]:
@@ -85,7 +146,14 @@ def main():
 
     completed = run_pipeline(state, agent_runner, from_agent=args.from_agent, only_agent=args.agent)
     state.save(state_file)
-    print(f"Run {run_id}: completed agents {completed}")
+
+    print("=" * 60)
+    if completed:
+        print(f"  Run {run_id}: completed agents {completed}")
+    else:
+        print(f"  Run {run_id}: no agents ran (prerequisites not met or already completed)")
+    print("=" * 60)
+    print()
     if args.agent and completed and len(completed) == 1:
         next_n = int(args.agent.split("_")[1]) + 1
         if next_n <= 9:

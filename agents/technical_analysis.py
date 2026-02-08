@@ -59,6 +59,57 @@ def _parse_json_block(text: str) -> dict | None:
         return None
 
 
+def _docx_structured_summary_from_json(tech: dict) -> str:
+    """Build narrative section that exactly reflects technical_analysis.json so DOCX and JSON stay aligned."""
+    intro = (
+        "The following is the structured summary that matches technical_analysis.json. "
+        "Downstream agents can use this section or the JSON for the same information.\n\n"
+    )
+    lines = []
+    if tech.get("file_patterns"):
+        lines.append("File and I/O patterns (from JSON):")
+        for f in tech["file_patterns"]:
+            prog = f.get("program", "")
+            fname = f.get("file_or_resource", "")
+            op = f.get("operation", "")
+            desc = f.get("description", "")
+            lines.append(f"  Program: {prog}; File: {fname}; Operation: {op}. {desc}")
+        lines.append("")
+    if tech.get("loops"):
+        lines.append("Looping behavior (from JSON):")
+        for l in tech["loops"]:
+            prog = l.get("program", "")
+            typ = l.get("type", "")
+            exit_ = l.get("exit_condition", "")
+            desc = l.get("description", "")
+            lines.append(f"  Program: {prog}; Type: {typ}; Exit: {exit_}. {desc}")
+        lines.append("")
+    if tech.get("cursor_logic"):
+        lines.append("Cursor/position logic (from JSON):")
+        for c in tech["cursor_logic"]:
+            prog = c.get("program", "")
+            desc = c.get("description", "")
+            lines.append(f"  {prog}: {desc}")
+        lines.append("")
+    if tech.get("error_handling"):
+        lines.append("Error handling (from JSON):")
+        for e in tech["error_handling"]:
+            prog = e.get("program", "")
+            mech = e.get("mechanism", "")
+            desc = e.get("description", "")
+            lines.append(f"  {prog}; Mechanism: {mech}. {desc}")
+        lines.append("")
+    if tech.get("restart_checkpoint"):
+        lines.append("Restart/checkpoint logic (from JSON):")
+        for r in tech["restart_checkpoint"]:
+            prog = r.get("program", "")
+            desc = r.get("description", "")
+            lines.append(f"  {prog}: {desc}")
+    if not lines:
+        return intro + "No structured technical data extracted; see narrative sections above."
+    return intro + "\n".join(lines)
+
+
 def _parse_fallback_technical(response: str) -> dict:
     """If no JSON block, build minimal structure from section headings."""
     file_patterns = []
@@ -128,11 +179,7 @@ class TechnicalAnalysisAgent(BaseAgent):
         if not sections:
             sections = [{"title": "Technical Design (COBOL)", "body": response[:12000]}]
 
-        out_dir = Path(context.output_dir) / "04_technical"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        docx_path = out_dir / "04_Technical_Design_COBOL.docx"
-        write_docx(sections, docx_path, title="Technical Design (COBOL)")
-
+        # Parse JSON so we can add a DOCX section that exactly matches it (balance narrative + JSON)
         parsed = _parse_json_block(response)
         if parsed and isinstance(parsed, dict):
             tech = {
@@ -144,6 +191,17 @@ class TechnicalAnalysisAgent(BaseAgent):
             }
         else:
             tech = _parse_fallback_technical(response)
+
+        # Append structured summary so DOCX narrative and JSON stay aligned for downstream agents
+        sections.append({
+            "title": "Structured Summary (aligned with technical_analysis.json)",
+            "body": _docx_structured_summary_from_json(tech),
+        })
+
+        out_dir = Path(context.output_dir) / "04_technical"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        docx_path = out_dir / "04_Technical_Design_COBOL.docx"
+        write_docx(sections, docx_path, title="Technical Design (COBOL)")
 
         json_path = out_dir / "technical_analysis.json"
         with open(json_path, "w") as f:

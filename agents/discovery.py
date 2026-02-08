@@ -196,8 +196,13 @@ class DiscoveryAgent(BaseAgent):
             io_files = llm_out["io_files"]
             db_tables = llm_out["db_tables"]
 
-        # DOCX sections (all from parser except the three classification lines)
+        # DOCX sections (all from parser except the three classification lines). Narrative matches discovery.json.
+        docx_intro = (
+            "This overview is generated from the COBOL source. "
+            "The content below matches discovery.json exactly; downstream agents can use either the document or the JSON for consistency."
+        )
         sections = [
+            {"title": "Overview", "body": docx_intro},
             {"title": "Programs", "body": _section_programs(programs)},
             {"title": "Batch vs CICS", "body": batch_or_cics},
             {"title": "Copybooks Used", "body": _section_copybooks(copybooks)},

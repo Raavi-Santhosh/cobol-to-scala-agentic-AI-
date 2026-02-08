@@ -61,6 +61,51 @@ def _parse_json_block(text: str) -> dict | None:
         return None
 
 
+def _docx_structured_summary_from_json(rules: dict) -> str:
+    """Build narrative section that exactly reflects business_rules.json so DOCX and JSON stay aligned."""
+    intro = (
+        "The following is the structured summary that matches business_rules.json. "
+        "Downstream agents can use this section or the JSON for the same information.\n\n"
+    )
+    lines = []
+    if rules.get("rules"):
+        lines.append("Business rules (from JSON):")
+        for r in rules["rules"]:
+            rid = r.get("id", "")
+            desc = r.get("description", "")
+            lines.append(f"  {rid}: {desc}")
+        lines.append("")
+    if rules.get("decision_logic"):
+        lines.append("Decision logic (from JSON):")
+        for d in rules["decision_logic"]:
+            cond = d.get("condition", "")
+            out = d.get("outcome", "")
+            if out:
+                lines.append(f"  IF {cond} THEN {out}")
+            else:
+                lines.append(f"  {cond}")
+        lines.append("")
+    if rules.get("domain_terms"):
+        lines.append("Domain terms (from JSON):")
+        for t in rules["domain_terms"]:
+            term = t.get("term", "")
+            meaning = t.get("meaning", "")
+            lines.append(f"  {term}: {meaning}")
+        lines.append("")
+    if rules.get("edge_cases"):
+        lines.append("Edge cases (from JSON):")
+        for e in rules["edge_cases"]:
+            desc = e.get("description", "")
+            ex = e.get("example", "")
+            if ex:
+                lines.append(f"  {desc} Example: {ex}")
+            else:
+                lines.append(f"  {desc}")
+    if not lines:
+        return intro + "No structured rules extracted; see narrative sections above."
+    return intro + "\n".join(lines)
+
+
 def _parse_fallback_rules(response: str) -> dict:
     """If no JSON block, try to extract rules from section text."""
     rules = []
@@ -144,11 +189,7 @@ class BusinessLogicAgent(BaseAgent):
         if not sections:
             sections = [{"title": "Business Logic Specification", "body": response[:12000]}]
 
-        out_dir = Path(context.output_dir) / "03_business"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        docx_path = out_dir / "03_Business_Logic_Specification.docx"
-        write_docx(sections, docx_path, title="Business Logic Specification")
-
+        # Parse JSON so we can add a DOCX section that exactly matches it (balance narrative + JSON)
         parsed = _parse_json_block(response)
         if parsed and isinstance(parsed, dict):
             rules = {
@@ -161,6 +202,17 @@ class BusinessLogicAgent(BaseAgent):
             rules = _parse_fallback_rules(response)
             if not rules.get("domain_terms"):
                 rules["domain_terms"] = []
+
+        # Append structured summary so DOCX narrative and JSON stay aligned for downstream agents
+        sections.append({
+            "title": "Structured Summary (aligned with business_rules.json)",
+            "body": _docx_structured_summary_from_json(rules),
+        })
+
+        out_dir = Path(context.output_dir) / "03_business"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        docx_path = out_dir / "03_Business_Logic_Specification.docx"
+        write_docx(sections, docx_path, title="Business Logic Specification")
 
         json_path = out_dir / "business_rules.json"
         with open(json_path, "w") as f:

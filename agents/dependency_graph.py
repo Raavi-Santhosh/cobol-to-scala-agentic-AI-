@@ -1,42 +1,87 @@
 """Agent 2: Dependency Graph. Call hierarchy, shared components, data flow, migration order.
-Populates dependency_graph.json from discovery.json + COPY scan. DOCX is detailed for downstream agents."""
+Populates dependency_graph.json from discovery.json + COPY scan. DOCX is generated FROM the same
+JSON data so it always matches and is complete (no reliance on LLM for structure)."""
 import json
 import re
 from pathlib import Path
 from collections import defaultdict
 
 from .base import BaseAgent, AgentContext, AgentResult
-from llm import generate, get_model_for_agent, get_temperature
 from documents.writer import write_docx
-from documents.reader import read_docx_text, read_cobol_directory
+from documents.reader import read_cobol_directory
 
 
-DEPENDENCY_PROMPT = """You are a system architect. Document at a MINUTE level of detail so downstream agents understand exactly who calls whom and how data flows.
+def _docx_call_hierarchy(call_hierarchy: list[dict]) -> str:
+    """Build Call Hierarchy section from call_hierarchy JSON. Clear narrative + data matching JSON."""
+    intro = (
+        "This section lists every program and its call relationships, derived from CALL statements in the source. "
+        "The content below is the same as dependency_graph.json \"call_hierarchy\"; downstream agents can rely on either.\n\n"
+    )
+    if not call_hierarchy:
+        return intro + "No call relationships found."
+    by_caller = defaultdict(list)
+    for e in call_hierarchy:
+        by_caller[e["caller"]].append((e["callee"], e.get("caller_file", ""), e.get("callee_file", "")))
+    called_by = defaultdict(list)
+    for e in call_hierarchy:
+        called_by[e["callee"]].append(e["caller"])
+    lines = ["Callers (who calls whom):", ""]
+    for caller in sorted(by_caller.keys()):
+        callees = by_caller[caller]
+        caller_file = callees[0][1] if callees else ""
+        callee_names = sorted(set(c[0] for c in callees))
+        lines.append(f"  {caller} ({caller_file}) calls: {', '.join(callee_names)}")
+    lines.append("")
+    lines.append("Called-by (reverse lookup):")
+    for callee in sorted(called_by.keys()):
+        callers = sorted(called_by[callee])
+        lines.append(f"  {callee} is called by: {', '.join(callers)}")
+    return intro + "\n".join(lines)
 
-Do NOT explain business rules or algorithms. Focus ONLY on structure and data flow.
 
-Given the overview and source below, produce a highly detailed document:
+def _docx_shared_components(shared_copybooks: list[dict]) -> str:
+    """Build Shared Components section from shared_copybooks JSON. Narrative matches JSON."""
+    intro = (
+        "Copybooks (COPY statements) define shared data structures. Below, shared copybooks are listed first, "
+        "then the full list. This content matches dependency_graph.json \"shared_copybooks\".\n\n"
+    )
+    if not shared_copybooks:
+        return intro + "No copybooks found."
+    shared_only = [s for s in shared_copybooks if s.get("shared")]
+    lines = ["Shared copybooks (used by more than one program):", ""]
+    for s in shared_only:
+        lines.append(f"  {s['copybook']}: used by {', '.join(s['used_by'])}")
+    lines.append("")
+    lines.append("All copybooks and programs that use them:")
+    for s in shared_copybooks:
+        marker = " (SHARED)" if s.get("shared") else ""
+        lines.append(f"  {s['copybook']}{marker}: {', '.join(s['used_by'])}")
+    return intro + "\n".join(lines)
 
-1. Call Hierarchy
-   - List EVERY program. For each program state: (a) which programs it CALLs (by PROGRAM-ID), (b) which programs call it.
-   - Use explicit lines like "MAINPGM calls: CALCSUBR" and "CALCSUBR is called by: MAINPGM".
 
-2. Shared Components
-   - List EVERY copybook. For each copybook list EVERY program that uses it (COPY statement). If a copybook is used by more than one program, say "SHARED" and list all programs.
+def _docx_migration_order(migration_order: list[dict]) -> str:
+    """Build Migration Order section from migration_order JSON. Narrative matches JSON."""
+    intro = (
+        "Programs are listed in recommended migration order (callees before callers). "
+        "This list is the same as dependency_graph.json \"migration_order\".\n\n"
+    )
+    if not migration_order:
+        return intro + "No migration order computed."
+    lines = [f"  {m['order']}. {m['program']} — {m.get('justification', '')}" for m in migration_order]
+    return intro + "\n".join(lines)
 
-3. Data Flow Summary
-   - Describe step-by-step how data moves: which program passes what to which (e.g. via CALL USING, copybook fields). Name programs and data areas. Be specific enough that a downstream agent can trace each flow.
 
-4. Migration Order Recommendation
-   - List programs in the order they should be migrated (one per line or numbered). For each program give a one-line justification (e.g. "Leaf program, no callers" or "Depends only on ERRPROC which is already migrated").
-
-Format with exactly these section titles on their own line:
-- Call Hierarchy
-- Shared Components
-- Data Flow Summary
-- Migration Order Recommendation
-
-After the last section add: ---END---"""
+def _docx_data_flow_summary(call_hierarchy: list[dict], shared_copybooks: list[dict]) -> str:
+    """Narrative derived from JSON so DOCX and JSON stay in sync."""
+    shared_count = sum(1 for s in shared_copybooks if s.get("shared"))
+    call_count = len(call_hierarchy)
+    return (
+        "Data flow in this codebase is determined by the call hierarchy and shared copybooks. "
+        "Parameters are passed via CALL USING; shared copybooks define common record layouts and fields.\n\n"
+        f"This document reflects {call_count} caller-to-callee relationships and {shared_count} copybooks shared across multiple programs. "
+        "The Call Hierarchy and Shared Components sections above are the single source of truth and match dependency_graph.json. "
+        "The Migration Order section below lists programs so that each program is migrated only after the programs it calls."
+    )
 
 
 def _load_discovery(context: AgentContext) -> dict:
@@ -137,8 +182,6 @@ class DependencyGraphAgent(BaseAgent):
 
     def run(self, context: AgentContext) -> AgentResult:
         discovery = _load_discovery(context)
-        overview_path = context.artifact_paths.get("01_COBOL_Codebase_Overview.docx")
-        overview_text = read_docx_text(overview_path) if overview_path else ""
         cobol_files = read_cobol_directory(context.cobol_dir)
         program_names = {p["name"] for p in discovery.get("programs", [])}
 
@@ -150,41 +193,16 @@ class DependencyGraphAgent(BaseAgent):
             "call_hierarchy": call_hierarchy,
             "shared_copybooks": shared_copybooks,
             "migration_order": migration_order,
-            "data_flow_summary": "See DOCX for narrative; structure derived from call hierarchy and shared copybooks.",
+            "data_flow_summary": "Data flows follow call hierarchy and shared copybooks; see DOCX for narrative.",
         }
 
-        combined = "\n\n".join(
-            f"--- {p} ---\n{c[:4000]}" for p, c in cobol_files.items()
-        )
-        prompt = (
-            DEPENDENCY_PROMPT
-            + "\n\n--- Overview ---\n"
-            + overview_text
-            + "\n\n--- Call linkage data (use this for accuracy) ---\n"
-            + json.dumps({"call_hierarchy": call_hierarchy, "shared_copybooks": [s for s in shared_copybooks if s["shared"]], "migration_order": migration_order}, indent=2)[:8000]
-            + "\n\n--- Source ---\n"
-            + combined[:25000]
-        )
-        model = get_model_for_agent(self.agent_id)
-        response = generate(prompt, model=model, temperature=get_temperature(self.agent_id))
-
-        sections = []
-        current_title = ""
-        current_body = []
-        for line in response.split("\n"):
-            if line.strip() == "---END---":
-                break
-            if line.startswith("- ") and not line.startswith("-  "):
-                if current_title or current_body:
-                    sections.append({"title": current_title or "Section", "body": "\n".join(current_body)})
-                current_title = line.strip().lstrip("- ")
-                current_body = []
-            else:
-                current_body.append(line)
-        if current_title or current_body:
-            sections.append({"title": current_title or "Section", "body": "\n".join(current_body)})
-        if not sections:
-            sections = [{"title": "Dependency and Call Graph", "body": response[:12000]}]
+        # Build DOCX from same JSON data so DOCX and JSON always match and are complete
+        sections = [
+            {"title": "Call Hierarchy", "body": _docx_call_hierarchy(call_hierarchy)},
+            {"title": "Shared Components", "body": _docx_shared_components(shared_copybooks)},
+            {"title": "Data Flow Summary", "body": _docx_data_flow_summary(call_hierarchy, shared_copybooks)},
+            {"title": "Migration Order Recommendation", "body": _docx_migration_order(migration_order)},
+        ]
 
         out_dir = Path(context.output_dir) / "02_dependency"
         out_dir.mkdir(parents=True, exist_ok=True)
