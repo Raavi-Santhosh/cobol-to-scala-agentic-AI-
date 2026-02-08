@@ -84,7 +84,7 @@ def main():
         return result.artifacts
 
     completed = run_pipeline(state, agent_runner, from_agent=args.from_agent, only_agent=args.agent)
-    state.save()
+    state.save(state_file)
     print(f"Run {run_id}: completed agents {completed}")
     if args.agent and completed and len(completed) == 1:
         next_n = int(args.agent.split("_")[1]) + 1

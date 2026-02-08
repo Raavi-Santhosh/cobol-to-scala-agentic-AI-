@@ -49,7 +49,8 @@ class PipelineState:
         }
 
     def save(self, path: str | Path | None = None) -> Path:
-        path = path or Path(self.output_dir) / self.run_id / "state.json"
+        # output_dir is already run-specific (e.g. outputs/run_id), so state lives there
+        path = path or Path(self.output_dir) / "state.json"
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
