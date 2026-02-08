@@ -8,36 +8,36 @@ from llm import generate, get_model_for_agent, get_temperature, get_target_langu
 from documents.reader import read_docx_text
 
 
-SCALA_CODE_PROMPT = """You are a Scala developer. Generate COMPLETE Scala code for EVERY file in the design below.
+SCALA_CODE_PROMPT = """You are a Scala developer. Generate COMPLETE Scala code for EVERY file listed below. Do not skip any file.
 
 RULES:
-1. You MUST emit a separate ---FILE: ... --- block for EACH file listed in the Package Structure / design. Do not skip any file.
+1. You MUST emit exactly one ---FILE: path --- ... ---END FILE--- block for EACH file in the "Files to generate" list. If there are N files, you must output N blocks. No exceptions.
 2. Use the EXACT package paths and class/object names from the design. Match case classes and services exactly.
-3. Implement every case class with the fields specified; implement every service with the methods specified.
-4. Write only valid Scala. No COBOL, no placeholders like "// TODO". Full implementations.
-5. For each file use this format exactly:
+3. For each file, implement the "Purpose" and every item in "Logic to implement" from the Per-File Implementation section. Full implementations only; no "// TODO" or placeholders.
+4. Write only valid Scala. No COBOL.
 
----FILE: package/path/FileName.scala---
-// Scala code
+Format for each file (repeat for every file in the list):
+---FILE: path/from/list/File.scala---
+// Scala code implementing the purpose and logic for this file
 ---END FILE---
 
-List of files you MUST generate (from the design):"""
+Files to generate (you MUST output one ---FILE--- block per line, in this order):"""
 
 
-PYTHON_CODE_PROMPT = """You are a Python developer. Generate COMPLETE Python code for EVERY module in the design below.
+PYTHON_CODE_PROMPT = """You are a Python developer. Generate COMPLETE Python code for EVERY module listed below. Do not skip any.
 
 RULES:
-1. You MUST emit a separate ---FILE: ... --- block for EACH module listed in the Package/Module Structure. Do not skip any.
+1. You MUST emit exactly one ---FILE: path --- ... ---END FILE--- block for EACH module in the "Modules to generate" list. If there are N modules, you must output N blocks. No exceptions.
 2. Use the EXACT module paths and class/function names from the design. Match dataclasses and services exactly.
-3. Implement every dataclass with the fields specified; implement every service with the methods specified.
-4. Write only valid Python 3 with type hints. No COBOL, no placeholders. Full implementations.
-5. For each file use this format exactly:
+3. For each module, implement the "Purpose" and every item in "Logic to implement" from the Per-File Implementation section. Full implementations only; no placeholders.
+4. Write only valid Python 3 with type hints. No COBOL.
 
----FILE: path/to/module.py---
-# Python code
+Format for each module (repeat for every module in the list):
+---FILE: path/from/list/module.py---
+# Python code implementing the purpose and logic for this module
 ---END FILE---
 
-List of modules you MUST generate (from the design):"""
+Modules to generate (you MUST output one ---FILE--- block per line, in this order):"""
 
 
 def _extract_files(response: str) -> list[tuple[str, str]]:
@@ -64,32 +64,56 @@ def _load_design_json(context: AgentContext) -> dict | None:
     return None
 
 
-def _file_checklist(design: dict | None, target: str) -> str:
-    """Build explicit list of files the LLM must generate."""
-    if not design:
-        return "(Parse the design document above and list every .scala or .py file; then generate each one.)"
+def _file_checklist(design: dict | None, target: str) -> tuple[str, str]:
+    """Build (1) numbered file list for prompt, (2) per-file mandate text (purpose + logic) for code gen."""
     ext = ".py" if target == "python" else ".scala"
+    if not design:
+        return "(Parse the design above; list every .scala or .py file and generate each one.)", ""
+
     packages = design.get("packages", [])
-    if packages:
-        lines = [f"  - {p.get('path', '')}" for p in packages if p.get("path")]
-        return "\n".join(lines) if lines else "(See Package Structure in design.)"
-    case_classes = design.get("case_classes", [])
-    services = design.get("services", [])
+    file_resps = design.get("file_responsibilities", [])
     paths = []
-    pkg_sep = "/" if target == "scala" else "/"
-    for c in case_classes:
-        pkg = (c.get("package") or c.get("module", "")).replace(".", pkg_sep)
-        name = c.get("name", "")
-        if name:
-            paths.append(f"  - {pkg}/{name}{ext}".replace("//", "/").strip("/"))
-    for s in services:
-        pkg = (s.get("package") or s.get("module", "")).replace(".", pkg_sep)
-        name = s.get("name", "")
-        if name:
-            paths.append(f"  - {pkg}/{name}{ext}".replace("//", "/").strip("/"))
-    if paths:
-        return "\n".join(paths)
-    return "(See design document for every file to generate.)"
+    if file_resps:
+        paths = [fr.get("path", "").strip() for fr in file_resps if fr.get("path")]
+    if not paths and packages:
+        paths = [p.get("path", "").strip() for p in packages if p.get("path")]
+    if not paths:
+        case_classes = design.get("case_classes", [])
+        services = design.get("services", [])
+        pkg_sep = "/"
+        for c in case_classes:
+            pkg = (c.get("package") or c.get("module", "")).replace(".", pkg_sep)
+            name = c.get("name", "")
+            if name:
+                paths.append(f"{pkg}/{name}{ext}".replace("//", "/").strip("/"))
+        for s in services:
+            pkg = (s.get("package") or s.get("module", "")).replace(".", pkg_sep)
+            name = s.get("name", "")
+            if name:
+                paths.append(f"{pkg}/{name}{ext}".replace("//", "/").strip("/"))
+
+    if not paths:
+        return "(See Package Structure in design.)", ""
+
+    checklist = "\n".join(f"  {i+1}. {p}" for i, p in enumerate(paths))
+    checklist = f"You MUST generate exactly {len(paths)} files.\n" + checklist
+
+    mandate_lines = []
+    for i, path in enumerate(paths):
+        fr = next((f for f in file_resps if (f.get("path") or "").strip() == path), None)
+        if fr:
+            mandate_lines.append(f"File {i+1}: {path}")
+            mandate_lines.append(f"  Purpose: {fr.get('purpose', '')}")
+            for logic in fr.get("logic", []):
+                mandate_lines.append(f"  Logic: - {logic}")
+        else:
+            pkg = next((p for p in packages if (p.get("path") or "").strip() == path), None)
+            mandate_lines.append(f"File {i+1}: {path}")
+            mandate_lines.append(f"  Purpose: {pkg.get('description', 'Implement as per design') if pkg else 'Implement as per design'}")
+        mandate_lines.append("")
+    per_file_mandate = "\n".join(mandate_lines) if mandate_lines else ""
+
+    return checklist, per_file_mandate
 
 
 class ScalaCodeAgent(BaseAgent):
@@ -102,16 +126,18 @@ class ScalaCodeAgent(BaseAgent):
         pseudo_text = read_docx_text(pseudo_doc) if pseudo_doc else ""
         design_text = read_docx_text(design_doc) if design_doc else ""
         design_json = _load_design_json(context)
-        file_checklist = _file_checklist(design_json, target)
+        file_checklist, per_file_mandate = _file_checklist(design_json, target)
 
         if target == "python":
             prompt = (
                 PYTHON_CODE_PROMPT
                 + "\n"
                 + file_checklist
+                + "\n\n--- Per-file implementation (what to implement in each file) ---\n"
+                + (per_file_mandate or "(See design document.)")
                 + "\n\n--- Pseudocode ---\n"
                 + pseudo_text[:20000]
-                + "\n\n--- Python Design (implement EVERY module above) ---\n"
+                + "\n\n--- Python Design (implement EVERY module above; use Per-File Implementation for each) ---\n"
                 + design_text[:25000]
             )
             if design_json:
@@ -124,9 +150,11 @@ class ScalaCodeAgent(BaseAgent):
                 SCALA_CODE_PROMPT
                 + "\n"
                 + file_checklist
+                + "\n\n--- Per-file implementation (what to implement in each file) ---\n"
+                + (per_file_mandate or "(See design document.)")
                 + "\n\n--- Pseudocode ---\n"
                 + pseudo_text[:20000]
-                + "\n\n--- Scala Design (implement EVERY file above) ---\n"
+                + "\n\n--- Scala Design (implement EVERY file above; use Per-File Implementation for each) ---\n"
                 + design_text[:25000]
             )
             if design_json:

@@ -25,6 +25,12 @@ You MUST specify:
 4. COBOL to Scala Mapping
    - Table: COBOL concept | Scala concept (package.ClassName or package.ObjectName). One row per concept.
 
+5. Per-File Implementation (Clear Cut-Outs)
+   - For EACH file in the Package Structure, list:
+     (a) File path (e.g. com/example/app/Main.scala)
+     (b) Purpose: one sentence on what this file is responsible for
+     (c) Logic to implement: bullet list of what this file MUST do (e.g. "Parse args and delegate to DatabaseService", "Implement execute(): open connection, run SQL, handle SQLCODE", "Hold status field; used by BR-01"). Be specific so the code generator knows exactly what to write in that file. No file may be omitted.
+
 You MUST NOT: write Scala code or skip any class/file. Be exhaustive.
 
 Use exactly these section titles on their own line:
@@ -32,12 +38,13 @@ Use exactly these section titles on their own line:
 - Case Classes
 - Services
 - COBOL to Scala Mapping
+- Per-File Implementation (Clear Cut-Outs)
 
 End with: ---END---
 
-Then output a JSON block that the code generator will use. Use exactly this format (no other text around it):
+Then output a JSON block that the code generator will use. Include file_responsibilities with path, purpose, and logic array for each file. Use exactly this format (no other text around it):
 ```json
-{"packages": [{"path": "com/example/app/Main.scala", "description": "Main entry"}], "case_classes": [{"name": "RecordStatus", "package": "com.example.model", "fields": [{"name": "status", "type": "String"}]}], "services": [{"name": "DatabaseService", "package": "com.example.service", "methods": ["def execute(op: DatabaseOperation): Try[Unit]"]}], "mapping": [{"cobol_concept": "Record Status", "scala_concept": "com.example.model.RecordStatus"}]}
+{"packages": [{"path": "com/example/app/Main.scala", "description": "Main entry"}], "case_classes": [{"name": "RecordStatus", "package": "com.example.model", "fields": [{"name": "status", "type": "String"}]}], "services": [{"name": "DatabaseService", "package": "com.example.service", "methods": ["def execute(op: DatabaseOperation): Try[Unit]"]}], "mapping": [{"cobol_concept": "Record Status", "scala_concept": "com.example.model.RecordStatus"}], "file_responsibilities": [{"path": "com/example/app/Main.scala", "purpose": "Entry point; orchestrates flow", "logic": ["Parse command-line args", "Call DatabaseService.execute with operation", "Exit with return code"]}]}
 ```"""
 
 
@@ -57,6 +64,12 @@ You MUST specify:
 4. COBOL to Python Mapping
    - Table: COBOL concept | Python concept (module.ClassName or module.function_name). One row per concept.
 
+5. Per-File Implementation (Clear Cut-Outs)
+   - For EACH module in the Package Structure, list:
+     (a) Module path (e.g. app/main.py)
+     (b) Purpose: one sentence on what this module is responsible for
+     (c) Logic to implement: bullet list of what this module MUST do. Be specific so the code generator knows exactly what to write. No module may be omitted.
+
 You MUST NOT: write Python code or skip any class/module. Be exhaustive.
 
 Use exactly these section titles on their own line:
@@ -64,12 +77,13 @@ Use exactly these section titles on their own line:
 - Data Classes / Dataclasses
 - Services and Modules
 - COBOL to Python Mapping
+- Per-File Implementation (Clear Cut-Outs)
 
 End with: ---END---
 
-Then output a JSON block that the code generator will use. Use exactly this format (no other text around it):
+Then output a JSON block that the code generator will use. Include file_responsibilities with path, purpose, and logic array. Use exactly this format (no other text around it):
 ```json
-{"packages": [{"path": "app/main.py", "description": "Main entry"}], "case_classes": [{"name": "RecordStatus", "module": "model.record_status", "fields": [{"name": "status", "type": "str"}]}], "services": [{"name": "DatabaseService", "module": "service.database", "methods": ["def execute(op: DatabaseOperation) -> None"]}], "mapping": [{"cobol_concept": "Record Status", "scala_concept": "model.record_status.RecordStatus"}]}
+{"packages": [{"path": "app/main.py", "description": "Main entry"}], "case_classes": [{"name": "RecordStatus", "module": "model.record_status", "fields": [{"name": "status", "type": "str"}]}], "services": [{"name": "DatabaseService", "module": "service.database", "methods": ["def execute(op: DatabaseOperation) -> None"]}], "mapping": [{"cobol_concept": "Record Status", "scala_concept": "model.record_status.RecordStatus"}], "file_responsibilities": [{"path": "app/main.py", "purpose": "Entry point", "logic": ["Parse args", "Call DatabaseService.execute", "Exit with code"]}]}
 ```"""
 
 
@@ -135,11 +149,13 @@ def _parse_design_sections_into_json(response: str) -> dict:
             parts = [p.strip() for p in stripped.split("|")[1:-1]]
             if len(parts) >= 2 and parts[0] and parts[1]:
                 mapping.append({"cobol_concept": parts[0], "scala_concept": parts[1]})
+    file_responsibilities = [{"path": p.get("path", ""), "purpose": p.get("description", "See DOCX"), "logic": [p.get("description", "Implement as per DOCX")]} for p in packages] if packages else []
     return {
         "packages": packages or [{"path": "app/Main.scala", "description": "See DOCX"}],
         "case_classes": case_classes,
         "services": services,
         "mapping": mapping,
+        "file_responsibilities": file_responsibilities,
     }
 
 
@@ -149,6 +165,14 @@ def _docx_structured_summary_from_json(design: dict) -> str:
         "The following matches scala_design.json. The code generator uses this structure to produce every file.\n\n"
     )
     lines = []
+    if design.get("file_responsibilities"):
+        lines.append("Per-file implementation (clear cut-outs):")
+        for fr in design["file_responsibilities"]:
+            lines.append(f"  {fr.get('path', '')}")
+            lines.append(f"    Purpose: {fr.get('purpose', '')}")
+            for logic in fr.get("logic", [])[:10]:
+                lines.append(f"    - {logic}")
+        lines.append("")
     if design.get("packages"):
         lines.append("Packages / files:")
         for p in design["packages"]:
@@ -180,7 +204,7 @@ def _normalize_section_title(line: str) -> str | None:
     s = line.strip()
     if not s or s == "---END---":
         return None
-    for title in ("Package Structure", "Case Classes", "Services", "COBOL to Scala Mapping",
+    for title in ("Package Structure", "Case Classes", "Services", "COBOL to Scala Mapping", "Per-File Implementation (Clear Cut-Outs)",
                   "Package and Module Structure", "Data Classes / Dataclasses", "Services and Modules", "COBOL to Python Mapping"):
         if re.match(r"^[-*]+\s*" + re.escape(title) + r"\s*$", s, re.I) or s.lower() == title.lower():
             return title
@@ -247,11 +271,18 @@ class ScalaDesignAgent(BaseAgent):
                 "case_classes": parsed.get("case_classes", []),
                 "services": parsed.get("services", []),
                 "mapping": parsed.get("mapping", []),
+                "file_responsibilities": parsed.get("file_responsibilities", []),
             }
             if not design["packages"]:
                 design["packages"] = [{"path": "app/Main.scala", "description": "See DOCX"}]
+            if not design["file_responsibilities"] and design["packages"]:
+                design["file_responsibilities"] = [
+                    {"path": p.get("path", ""), "purpose": p.get("description", "See DOCX"), "logic": [p.get("description", "Implement as per design")]}
+                    for p in design["packages"]
+                ]
         else:
             design = _parse_design_sections_into_json(response)
+            design.setdefault("file_responsibilities", [])
 
         sections.append({
             "title": "Structured Summary (aligned with scala_design.json)",
