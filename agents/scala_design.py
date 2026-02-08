@@ -9,7 +9,7 @@ from documents.writer import write_docx
 from documents.reader import read_docx_text
 
 
-SCALA_DESIGN_PROMPT = """You are a Scala architect. Produce a MINUTE-LEVEL design so the code generator can implement every file exactly.
+SCALA_DESIGN_PROMPT = """You are a Scala architect. You are given three inputs: (1) Business Logic — rules and domain; (2) Technical Design — I/O, loops, error handling per program; (3) Pseudocode — step-by-step flow. Use the PSEUDOCODE as the primary flow; use BUSINESS LOGIC to assign rules and domain concepts to your classes/services; use TECHNICAL DESIGN to align packages and services with programs, I/O, and error handling. Produce a MINUTE-LEVEL design so the code generator can implement every file exactly.
 
 You MUST specify:
 
@@ -41,7 +41,7 @@ Then output a JSON block that the code generator will use. Use exactly this form
 ```"""
 
 
-PYTHON_DESIGN_PROMPT = """You are a Python architect. Produce a MINUTE-LEVEL design so the code generator can implement every module exactly.
+PYTHON_DESIGN_PROMPT = """You are a Python architect. You are given three inputs: (1) Business Logic — rules and domain; (2) Technical Design — I/O, loops, error handling per program; (3) Pseudocode — step-by-step flow. Use the PSEUDOCODE as the primary flow; use BUSINESS LOGIC to assign rules and domain concepts to your modules/classes; use TECHNICAL DESIGN to align package structure with programs, I/O, and error handling. Produce a MINUTE-LEVEL design so the code generator can implement every module exactly.
 
 You MUST specify:
 
@@ -192,13 +192,26 @@ class ScalaDesignAgent(BaseAgent):
 
     def run(self, context: AgentContext) -> AgentResult:
         target = get_target_language()
+        business_doc = context.artifact_paths.get("03_Business_Logic_Specification.docx")
+        technical_doc = context.artifact_paths.get("04_Technical_Design_COBOL.docx")
         pseudo_doc = context.artifact_paths.get("05_Pseudocode_Language_Neutral.docx")
+        business_text = read_docx_text(business_doc) if business_doc else ""
+        technical_text = read_docx_text(technical_doc) if technical_doc else ""
         pseudo_text = read_docx_text(pseudo_doc) if pseudo_doc else ""
+        # All three inputs: business (rules/domain), technical (I/O, loops, errors), pseudocode (primary flow)
+        context_block = (
+            "\n\n--- Business Logic (rules, domain terms, edge cases — map to your classes/services) ---\n"
+            + business_text[:25000]
+            + "\n\n--- Technical Design (I/O per program, loops, error handling — align packages/services) ---\n"
+            + technical_text[:25000]
+            + "\n\n--- Pseudocode (primary flow — implement this step-by-step in your design) ---\n"
+            + pseudo_text[:30000]
+        )
         if target == "python":
-            prompt = PYTHON_DESIGN_PROMPT + "\n\n--- Pseudocode ---\n" + pseudo_text[:30000]
+            prompt = PYTHON_DESIGN_PROMPT + context_block
             doc_title = "Python Design Specification"
         else:
-            prompt = SCALA_DESIGN_PROMPT + "\n\n--- Pseudocode ---\n" + pseudo_text[:30000]
+            prompt = SCALA_DESIGN_PROMPT + context_block
             doc_title = "Scala Design Specification"
         model = get_model_for_agent(self.agent_id)
         response = generate(prompt, model=model, temperature=get_temperature(self.agent_id))

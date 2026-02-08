@@ -45,7 +45,11 @@ AGENT_CONTRACTS = {
         ],
     },
     "agent_6": {
-        "required_inputs": ["05_Pseudocode_Language_Neutral.docx"],
+        "required_inputs": [
+            "03_Business_Logic_Specification.docx",
+            "04_Technical_Design_COBOL.docx",
+            "05_Pseudocode_Language_Neutral.docx",
+        ],
         "outputs": [
             ("docx", "06_Scala_Design_Specification.docx"),
             ("json", "scala_design.json"),

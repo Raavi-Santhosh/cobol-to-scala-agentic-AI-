@@ -9,14 +9,25 @@ from documents.writer import write_docx
 from documents.reader import read_docx_text
 
 
-PSEUDOCODE_PROMPT = """You are a language-neutral algorithm designer. Produce PSEUDOCODE at a MINUTE level of detail so downstream agents can implement it exactly.
+PSEUDOCODE_PROMPT = """You are a language-neutral algorithm designer. Produce ELABORATE PSEUDOCODE so a downstream design agent gets a complete picture of the COBOL system without reading other documents.
 
-You MUST:
-- List EVERY step in the main flow (initialization, reads, decisions, writes, commits, etc.). Number each step. For any step that has sub-steps or branches, list them explicitly (e.g. "2a. If status = 'Y' then ... 2b. Else ...").
-- List EVERY control-flow decision: condition and resulting action. Use "IF ... THEN ..." or "WHEN ... THEN ...". Include loop exit conditions and retry logic.
-- List EVERY data transformation: what data is read or computed, how it is changed, and what is written or returned. Name key fields where relevant.
+You MUST weave in BOTH business logic AND technical detail:
 
-You MUST NOT: use COBOL syntax, use Scala/Python syntax, or skip steps for brevity. Be exhaustive.
+1. Main Flow
+   - List EVERY step (initialization, reads, decisions, writes, commits, etc.). Number each step; use sub-steps (2a, 2b) for branches.
+   - For each step that implements a business rule, cite the rule (e.g. "per BR-01" or "business rule: audit trail for insert/update").
+   - For each step that involves I/O, name the program and operation (e.g. "DB2HNDL: INSERT into PORTFOLIO"; "FILEHNDL: READ INPUT-FILE until end").
+   - For error handling or restart logic, state explicitly (e.g. "on SQLCODE < 0: rollback and exit"; "commit only after all operations succeed").
+
+2. Control Flow
+   - List EVERY decision: condition and action. Use "IF ... THEN ..." or "WHEN ... THEN ...".
+   - Include loop exit conditions, retry logic (e.g. "deadlock -911: retry up to 3 times"), and any checkpoint/restart conditions.
+
+3. Data Transformations
+   - For each transformation: what is read or computed, how it changes, what is written. Name key fields and which program or service performs it.
+   - Where a transformation aligns to a business rule or technical pattern, say so briefly.
+
+Your output must be detailed enough that a design agent can derive packages, case classes, and services (Scala or Python) from this pseudocode alone, while also having business and technical docs for traceability. Do NOT use COBOL or Scala/Python syntax. Be exhaustive.
 
 Use exactly these section titles on their own line (with a leading hyphen and space):
 - Main Flow
@@ -147,10 +158,10 @@ class PseudocodeAgent(BaseAgent):
         technical_text = read_docx_text(technical_doc) if technical_doc else ""
         prompt = (
             PSEUDOCODE_PROMPT
-            + "\n\n--- Business Logic ---\n"
-            + business_text[:25000]
-            + "\n\n--- Technical Design ---\n"
-            + technical_text[:25000]
+            + "\n\n--- Business Logic (use rules and domain terms; cite BR-ids where steps implement them) ---\n"
+            + business_text[:30000]
+            + "\n\n--- Technical Design (use I/O, loops, error handling, restart logic per program) ---\n"
+            + technical_text[:30000]
         )
         model = get_model_for_agent(self.agent_id)
         response = generate(prompt, model=model, temperature=get_temperature(self.agent_id))
