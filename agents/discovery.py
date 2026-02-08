@@ -1,7 +1,8 @@
-"""Agent 1: COBOL Discovery. Inventory only: programs, batch/CICS, copybooks, I/O, DB, calls.
+"""Agent 1: COBOL Discovery. Inventory only: programs, paths, copybooks, call linkages, I/O, DB.
 
-Production implementation: full codebase in dependency-aware chunks (no truncation).
-Related code (caller/callee, program/copybook) stays together; cross-chunk context preserves meaning.
+Full-knowledge flow: Phase 1 builds a complete inventory of every file (path, PROGRAM-ID, COPY, CALL);
+Phase 2 sends that entire inventory to the LLM in one request so it has full knowledge and produces
+the discovery DOCX + JSON. No truncation: every file is in the inventory.
 
 Set DISCOVERY_PARSER_ONLY=1 to skip LLM and build overview from parser only (no timeouts).
 """
@@ -19,10 +20,7 @@ from documents.reader import read_cobol_directory
 
 logger = logging.getLogger(__name__)
 
-# Chunk size for LLM requests (chars). Smaller = faster response per chunk; increase for production.
-CHUNK_MAX_CHARS = 12_000
-
-# Section titles the LLM must use (order preserved for merge)
+# Section titles the LLM must use (order preserved)
 DISCOVERY_SECTION_NAMES = [
     "Programs",
     "Batch vs CICS",
@@ -30,34 +28,87 @@ DISCOVERY_SECTION_NAMES = [
     "Input/Output Files",
     "Database Tables",
     "Called Programs",
+    "Call Linkages",
 ]
 
-DISCOVERY_PROMPT = """You are a junior COBOL analyst. Your ONLY job is to inventory the system.
+# Phase 2: LLM receives the COMPLETE inventory (all files) and performs discovery.
+DISCOVERY_PROMPT_FULL_KNOWLEDGE = """You are a junior COBOL analyst. Your ONLY job is to inventory the system.
 Do NOT explain business meaning, guess intent, rewrite logic, or mention Scala.
 
-Given the following COBOL source file list and content, produce a concise codebase overview.
+Below is the COMPLETE inventory of the codebase. Every file is listed with:
+- FILE: path
+- PROGRAM-ID: (if it is a program)
+- COPY: copybook names used in this file
+- CALL: program names called from this file
+- I/O/DB hints if present (SELECT, FD, EXEC SQL)
 
-Include:
-- List of programs (with PROGRAM-ID if visible)
-- Batch vs CICS (infer from context or say "Unknown" if unclear)
-- Copybooks used
-- Input/output files (if any)
-- DB tables referenced (if any)
-- Called programs (CALL statements)
+You have full knowledge of the entire codebase from this inventory. Using ONLY this inventory, produce the discovery document.
 
-Format your response with exactly these section titles on their own line:
+For EVERY section below list concrete data. Use the EXACT file paths and names from the inventory.
+
+1) Programs
+   List every program. Each line: PROGRAM-ID (exact file path from inventory).
+   Example: - MAINPGM (src/main/MAINPGM.cbl)
+
+2) Batch vs CICS
+   One line: Batch, CICS, or Unknown. Infer from file paths (e.g. batch/, online/) or content hints.
+
+3) Copybooks Used
+   List every COPY name that appears in the inventory. One per line: - COPYBOOKNAME
+
+4) Input/Output Files
+   From I/O hints in the inventory, or "None explicitly mentioned."
+
+5) Database Tables
+   From DB hints in the inventory, or "None referenced."
+
+6) Called Programs
+   List every program name that appears in any CALL line in the inventory. One per line: - PROGNAME
+
+7) Call Linkages
+   For each program that has CALL in the inventory, list: PROGRAM-ID (file path) calls: COMMA-SEPARATED list of called names.
+   Example: - MAINPGM (src/main/MAINPGM.cbl) calls: CALCSUBR
+
+Use exactly these section titles on their own line:
 - Programs
 - Batch vs CICS
 - Copybooks Used
 - Input/Output Files
 - Database Tables
 - Called Programs
+- Call Linkages
 
 After the last section, add a line: ---END---"""
 
 
 def _path_stem(p: str) -> str:
     return Path(p).stem.upper()
+
+
+def _build_full_inventory(cobol_files: dict[str, str]) -> str:
+    """Phase 1: Build complete inventory of every file (path, PROGRAM-ID, COPY, CALL, I/O/DB hints).
+    No truncation: every file is included. LLM will receive this entire string for full knowledge.
+    """
+    lines = ["=== COMPLETE CODEBASE INVENTORY (every file) ===\n"]
+    for path in sorted(cobol_files.keys()):
+        content = cobol_files[path]
+        block = [f"FILE: {path}"]
+        m = re.search(r"PROGRAM-ID\.\s*(\S+)\.", content, re.IGNORECASE)
+        if m:
+            block.append(f"  PROGRAM-ID: {m.group(1)}")
+        copies = list(dict.fromkeys(re.findall(r"COPY\s+(\S+)\.", content, re.IGNORECASE)))
+        if copies:
+            block.append("  COPY: " + ", ".join(copies))
+        calls = list(dict.fromkeys(re.findall(r"CALL\s+['\"]?(\w+)['\"]?", content, re.IGNORECASE)))
+        if calls:
+            block.append("  CALL: " + ", ".join(calls))
+        if re.search(r"SELECT\s|FD\s|FILE\s+CONTROL", content, re.IGNORECASE):
+            block.append("  I/O: (file/SELECT/FD references present)")
+        if re.search(r"EXEC\s+SQL|DB2|EXEC\s+CICS", content, re.IGNORECASE):
+            block.append("  DB/CICS: (EXEC SQL or CICS references present)")
+        lines.append("\n".join(block))
+        lines.append("")
+    return "\n".join(lines)
 
 
 def _resolve_copy_to_path(copy_name: str, all_paths: list[str]) -> str | None:
@@ -295,7 +346,8 @@ def _parse_llm_merged_to_structure(merged: dict[str, str]) -> dict:
     programs: list[dict] = []
     copybooks: list[str] = []
     called: list[str] = []
-    # Programs: e.g. "- PROGNAME (path/to/file.cbl)" or "PROGNAME - path" or "PROGNAME"
+    call_linkages: list[dict] = []
+    # Programs: e.g. "- PROGNAME (path/to/file.cbl)"
     for line in (merged.get("Programs") or "").split("\n"):
         line = line.strip()
         if not line or line.lower().startswith("none"):
@@ -309,30 +361,67 @@ def _parse_llm_merged_to_structure(merged: dict[str, str]) -> dict:
             programs.append({"name": parts[0], "file": parts[1].lstrip("- ()").strip() if len(parts) > 1 else ""})
         elif line:
             programs.append({"name": line, "file": ""})
-    # Copybooks Used: e.g. "- NAME" or "NAME"
+    # Copybooks Used
     for line in (merged.get("Copybooks Used") or "").split("\n"):
         line = line.strip().lstrip("- ").strip()
         if line and not line.lower().startswith("none"):
             copybooks.append(line.split()[0] if line.split() else line)
     copybooks = sorted(dict.fromkeys(copybooks))
-    # Called Programs: same
+    # Called Programs
     for line in (merged.get("Called Programs") or "").split("\n"):
         line = line.strip().lstrip("- ").strip()
         if line and not line.lower().startswith("none"):
             called.append(line.split()[0] if line.split() else line)
     called = sorted(dict.fromkeys(called))
+    # Call Linkages: e.g. "- MAINPGM (path.cbl) calls: CALCSUBR" or "PROG (path) calls: A, B"
+    for line in (merged.get("Call Linkages") or "").split("\n"):
+        line = line.strip().lstrip("- ").strip()
+        if not line or "calls:" not in line.lower():
+            continue
+        before, _, after = line.partition("calls:")
+        m = re.match(r"^(\w+)\s*\((.+)\)\s*$", before.strip())
+        if m:
+            caller_name, caller_file = m.group(1), m.group(2).strip()
+            callees = [s.strip() for s in after.split(",") if s.strip()]
+            call_linkages.append({"caller": caller_name, "file": caller_file, "calls": callees})
     batch = (merged.get("Batch vs CICS") or "").strip() or "Unknown"
     return {
         "programs": programs,
         "copybooks": copybooks,
         "called_programs": called,
+        "call_linkages": call_linkages,
         "batch_or_cics": batch,
     }
 
 
-def _build_overview_from_parser(structure: dict, file_count: int) -> list[dict]:
+def _build_call_linkages_from_refs(
+    refs: dict[str, set[str]], programs: list[dict]
+) -> list[dict]:
+    """Build call_linkages from dependency graph and program list (file -> program name)."""
+    path_to_name = {p["file"]: p["name"] for p in programs}
+    linkages = []
+    for p in programs:
+        path = p["file"]
+        called_paths = refs.get(path, set())
+        called_names = sorted(
+            path_to_name.get(cp, Path(cp).stem) for cp in called_paths if cp.endswith(".cbl") or cp.upper().endswith(".CBL")
+        )
+        if called_names:
+            linkages.append({"caller": p["name"], "file": path, "calls": called_names})
+    return linkages
+
+
+def _build_overview_from_parser(
+    structure: dict, file_count: int, call_linkages: list[dict] | None = None
+) -> list[dict]:
     """Build DOCX sections from parser output only (no LLM). Use when DISCOVERY_PARSER_ONLY=1."""
     bodies = _structure_to_section_bodies(structure)
+    linkages_body = ""
+    if call_linkages:
+        lines = [f"- {x['caller']} ({x['file']}) calls: {', '.join(x['calls'])}" for x in call_linkages]
+        linkages_body = "\n".join(lines)
+    else:
+        linkages_body = "None (parser-only)."
     return [
         {"title": "Programs", "body": bodies["Programs"]},
         {"title": "Batch vs CICS", "body": "Unknown (parser-only mode)."},
@@ -340,6 +429,7 @@ def _build_overview_from_parser(structure: dict, file_count: int) -> list[dict]:
         {"title": "Input/Output Files", "body": "None explicitly mentioned (parser-only)."},
         {"title": "Database Tables", "body": "None referenced (parser-only)."},
         {"title": "Called Programs", "body": bodies["Called Programs"]},
+        {"title": "Call Linkages", "body": linkages_body},
     ]
 
 
@@ -396,7 +486,11 @@ class DiscoveryAgent(BaseAgent):
         if parser_only:
             logger.info("Discovery: parser-only mode (DISCOVERY_PARSER_ONLY=1), skipping LLM")
             structure = _parse_cobol_structure(cobol_files)
-            sections_for_docx = _build_overview_from_parser(structure, len(cobol_files))
+            refs, _ = _build_dependency_graph(cobol_files)
+            call_linkages = _build_call_linkages_from_refs(refs, structure["programs"])
+            sections_for_docx = _build_overview_from_parser(
+                structure, len(cobol_files), call_linkages=call_linkages
+            )
             out_dir = Path(context.output_dir) / "discovery"
             out_dir.mkdir(parents=True, exist_ok=True)
             docx_path = out_dir / "01_COBOL_Codebase_Overview.docx"
@@ -405,6 +499,7 @@ class DiscoveryAgent(BaseAgent):
                 "programs": structure["programs"],
                 "copybooks": structure["copybooks"],
                 "called_programs": structure["called_programs"],
+                "call_linkages": call_linkages,
                 "batch_or_cics": "Unknown",
                 "file_count": len(cobol_files),
                 "chunk_count": 0,
@@ -420,39 +515,22 @@ class DiscoveryAgent(BaseAgent):
                 }
             )
 
-        refs, reverse = _build_dependency_graph(cobol_files)
-        chunks, path_to_chunk = _dependency_aware_chunks(cobol_files, CHUNK_MAX_CHARS)
-        total_chars = sum(len(c) for c in cobol_files.values())
+        # Phase 1: Full inventory of every file (no truncation)
+        full_inventory = _build_full_inventory(cobol_files)
         logger.info(
-            "Discovery: %d files, %d chars, %d dependency-aware chunk(s)",
+            "Discovery: full-knowledge inventory built, %d files, %d chars (all files included)",
             len(cobol_files),
-            total_chars,
-            len(chunks),
+            len(full_inventory),
         )
 
-        all_sections: list[dict[str, str]] = []
+        # Phase 2: Single LLM request with complete inventory
         model = get_model_for_agent(self.agent_id)
         temp = get_temperature(self.agent_id)
+        prompt = DISCOVERY_PROMPT_FULL_KNOWLEDGE + "\n\n" + full_inventory
+        response = generate(prompt, model=model, temperature=temp)
+        merged = _parse_response_into_sections(response)
 
-        for i, chunk_files in enumerate(chunks):
-            context_prefix = _cross_chunk_context(
-                i, set(chunk_files.keys()), path_to_chunk, reverse, refs
-            )
-            chunk_content = _format_chunk_content(chunk_files, context_prefix=context_prefix)
-            prompt = DISCOVERY_PROMPT + "\n\n" + chunk_content
-            logger.info(
-                "Discovery chunk %d/%d: %d files, %d chars (with cross-chunk context)",
-                i + 1,
-                len(chunks),
-                len(chunk_files),
-                len(chunk_content),
-            )
-            response = generate(prompt, model=model, temperature=temp)
-            sections = _parse_response_into_sections(response)
-            all_sections.append(sections)
-
-        merged = _merge_section_bodies(all_sections)
-        # DOCX and JSON both from LLM only: same source, so they stay in sync
+        # DOCX and JSON both from LLM only
         sections_for_docx = [
             {"title": name, "body": merged.get(name, "") or "Not provided by model."}
             for name in DISCOVERY_SECTION_NAMES
@@ -468,9 +546,10 @@ class DiscoveryAgent(BaseAgent):
             "programs": llm_structure["programs"],
             "copybooks": llm_structure["copybooks"],
             "called_programs": llm_structure["called_programs"],
+            "call_linkages": llm_structure["call_linkages"],
             "batch_or_cics": llm_structure["batch_or_cics"],
             "file_count": len(cobol_files),
-            "chunk_count": len(chunks),
+            "chunk_count": 0,
         }
         json_path = out_dir / "discovery.json"
         with open(json_path, "w") as f:
