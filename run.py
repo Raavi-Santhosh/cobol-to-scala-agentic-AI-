@@ -18,26 +18,44 @@ from agents import get_agent
 from llm import get_model_for_agent
 
 
+AGENT_IDS = [f"agent_{i}" for i in range(1, 10)]
+
+
 def main():
-    parser = argparse.ArgumentParser(description="COBOL Modernization Pipeline")
+    parser = argparse.ArgumentParser(
+        description="COBOL Modernization Pipeline. Run full pipeline or a single agent (agent_1 .. agent_9).",
+        epilog="Examples:\n"
+        "  Full pipeline:     python run.py --cobol-dir cobol_sample_codebase\n"
+        "  One agent:         python run.py --cobol-dir cobol_sample_codebase --run-id myrun --agent agent_1\n"
+        "  Next agent (same): python run.py --cobol-dir cobol_sample_codebase --run-id myrun --agent agent_2\n",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--cobol-dir", default="COBOL_Code-main", help="COBOL source directory")
     parser.add_argument("--output-dir", default="outputs", help="Output root directory")
-    parser.add_argument("--from-agent", type=int, default=1, help="Start from agent (1-9)")
-    parser.add_argument("--agent", type=str, help="Run only this agent (e.g. agent_1)")
-    parser.add_argument("--run-id", type=str, help="Run ID (default: timestamp)")
+    parser.add_argument("--from-agent", type=int, default=1, metavar="N", help="Start from agent N (1-9); only when not using --agent")
+    parser.add_argument("--agent", type=str, metavar="ID", choices=AGENT_IDS,
+                        help="Run only this agent (agent_1 .. agent_9). Use same --run-id as previous run to continue from its outputs.")
+    parser.add_argument("--run-id", type=str, help="Run ID (default: timestamp). Use a fixed value to run agents one-by-one and reuse outputs.")
     args = parser.parse_args()
 
     run_id = args.run_id or datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
     output_root = Path(args.output_dir) / run_id
     output_root.mkdir(parents=True, exist_ok=True)
 
-    state = PipelineState(
-        cobol_dir=Path(args.cobol_dir).resolve(),
-        output_dir=output_root.resolve(),
-        run_id=run_id,
-        started_at=datetime.now(tz=timezone.utc).isoformat(),
-    )
-    state.artifact_paths["cobol_source"] = str(state.cobol_dir)
+    state_file = output_root / "state.json"
+    if args.agent and state_file.exists():
+        state = PipelineState.load(state_file)
+        state.cobol_dir = Path(args.cobol_dir).resolve()
+        state.artifact_paths["cobol_source"] = str(state.cobol_dir)
+        logging.getLogger(__name__).info("Continuing run %s: loaded state, running %s only", run_id, args.agent)
+    else:
+        state = PipelineState(
+            cobol_dir=Path(args.cobol_dir).resolve(),
+            output_dir=output_root.resolve(),
+            run_id=run_id,
+            started_at=datetime.now(tz=timezone.utc).isoformat(),
+        )
+        state.artifact_paths["cobol_source"] = str(state.cobol_dir)
 
     def agent_runner(agent_id: str, st: PipelineState) -> dict:
         from agents.base import AgentContext
@@ -68,6 +86,10 @@ def main():
     completed = run_pipeline(state, agent_runner, from_agent=args.from_agent, only_agent=args.agent)
     state.save()
     print(f"Run {run_id}: completed agents {completed}")
+    if args.agent and completed and len(completed) == 1:
+        next_n = int(args.agent.split("_")[1]) + 1
+        if next_n <= 9:
+            print(f"Next: python run.py --cobol-dir {args.cobol_dir} --output-dir {args.output_dir} --run-id {run_id} --agent agent_{next_n}")
     return 0
 
 

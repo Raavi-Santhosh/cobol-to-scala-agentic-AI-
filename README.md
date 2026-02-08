@@ -19,26 +19,62 @@ pip install -r requirements.txt
 
 ## Run pipeline (CLI)
 
-```bash
-# Full pipeline (default COBOL dir: COBOL_Code-main, output: outputs/<run_id>)
-python run.py
+### Run the whole application at once (all agents 1–9)
 
-# Test with your sample codebase (recommended for first run)
+```bash
+# Full pipeline; one run ID for the entire pipeline
 python run.py --cobol-dir cobol_sample_codebase --output-dir outputs
 
-# Custom paths (absolute path example)
-python run.py --cobol-dir /Users/tra/Delta/Projects/COBOL_POC/cobol_sample_codebase --output-dir my_outputs
-
-# Start from agent 4
-python run.py --from-agent 4 --cobol-dir cobol_sample_codebase
-
-# Run only one agent (prerequisites must exist). Good for testing with a single Ollama model:
-python run.py --cobol-dir cobol_sample_codebase --agent agent_1
+# With a fixed run ID (e.g. for reproducibility)
+python run.py --cobol-dir cobol_sample_codebase --output-dir outputs --run-id myrun
 ```
 
-**Testing with one codebase:** Use `--cobol-dir cobol_sample_codebase` (or the full path above). Outputs go under `outputs/<run_id>/` (e.g. `outputs/20250207_123456/discovery/`, `.../dependency/`, etc.). To test with minimal setup, run only Agent 1 first (requires `phi3:mini` or `phi3:medium` in Ollama); then run the full pipeline when all models are available.
+Outputs go under `outputs/<run_id>/` (discovery/, dependency/, business/, …). Requires Ollama with the models in `config/pipeline.yaml`.
 
-**If Agent 1 (discovery) times out:** Run with parser-only mode (no LLM, no timeout): `DISCOVERY_PARSER_ONLY=1 python run.py --cobol-dir <path> --agent agent_1`. The overview DOCX and `discovery.json` are built from the parser only; use the LLM path in production when models respond in time.
+### Test each agent one by one (same run ID)
+
+Use a **fixed `--run-id`** and run each agent in order. Each agent uses the outputs from the previous ones.
+
+```bash
+# 1. Discovery
+python run.py --cobol-dir cobol_sample_codebase --output-dir outputs --run-id myrun --agent agent_1
+
+# 2. Dependency Graph (needs agent_1 outputs)
+python run.py --cobol-dir cobol_sample_codebase --output-dir outputs --run-id myrun --agent agent_2
+
+# 3. Business Logic
+python run.py --cobol-dir cobol_sample_codebase --output-dir outputs --run-id myrun --agent agent_3
+
+# 4. Technical Analysis
+python run.py --cobol-dir cobol_sample_codebase --output-dir outputs --run-id myrun --agent agent_4
+
+# 5. Pseudocode
+python run.py --cobol-dir cobol_sample_codebase --output-dir outputs --run-id myrun --agent agent_5
+
+# 6. Scala Design
+python run.py --cobol-dir cobol_sample_codebase --output-dir outputs --run-id myrun --agent agent_6
+
+# 7. Scala Code
+python run.py --cobol-dir cobol_sample_codebase --output-dir outputs --run-id myrun --agent agent_7
+
+# 8. Validation
+python run.py --cobol-dir cobol_sample_codebase --output-dir outputs --run-id myrun --agent agent_8
+
+# 9. Documentation
+python run.py --cobol-dir cobol_sample_codebase --output-dir outputs --run-id myrun --agent agent_9
+```
+
+After each single-agent run, the CLI prints the exact `--agent agent_N` command for the next step. Keep `--cobol-dir`, `--output-dir`, and `--run-id` the same across all of these.
+
+### Other options
+
+```bash
+# Start from a specific agent (run agents N..9 in one go)
+python run.py --cobol-dir cobol_sample_codebase --from-agent 4
+
+# Discovery with parser-only (no LLM, no timeout)
+DISCOVERY_PARSER_ONLY=1 python run.py --cobol-dir cobol_sample_codebase --run-id myrun --agent agent_1
+```
 
 ## Web UI (Streamlit)
 
