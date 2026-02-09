@@ -21,7 +21,8 @@ models:
   agent_3: llama3.1:70b
   agent_4: mixtral:8x22b
   agent_5: llama3.1:70b
-  agent_6: mixtral:8x22b
+  # agent_6: mixtral:8x22b   # large, slow even on H100; use 8x7b for faster runs
+  agent_6: mixtral:8x7b
   agent_7: codellama:34b
   agent_8: mixtral:8x7b
   agent_9: llama3.1:70b

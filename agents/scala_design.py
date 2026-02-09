@@ -125,9 +125,10 @@ def _parse_design_sections_into_json(response: str) -> dict:
         if not stripped or stripped.startswith("|") and "---" in stripped:
             continue
         if section == "packages":
-            # Line like "com/example/app/Main.scala" or "├── Main.scala" or "com.example.app.Main"
+            # Line like "1. com/example/app/Main.scala" or "├── Main.scala" or "com.example.app.Main"
             if ".scala" in stripped or ".py" in stripped:
                 path = re.sub(r"^[\s├│└─]*", "", stripped).strip()
+                path = re.sub(r"^\d+\.\s*", "", path)  # strip "1. ", "2. " numbered list prefix
                 if path and path not in ("```", "```scala"):
                     packages.append({"path": path, "description": ""})
             elif stripped.startswith("com.") or stripped.startswith("app.") or "/" in stripped:
@@ -222,14 +223,15 @@ class ScalaDesignAgent(BaseAgent):
         business_text = read_docx_text(business_doc) if business_doc else ""
         technical_text = read_docx_text(technical_doc) if technical_doc else ""
         pseudo_text = read_docx_text(pseudo_doc) if pseudo_doc else ""
-        # All three inputs: business (rules/domain), technical (I/O, loops, errors), pseudocode (primary flow)
+        # All three inputs; cap total context to avoid very long runs (agent_6 can be slow with huge prompts)
+        max_per_doc = 18000  # ~18k chars each keeps prompt manageable for faster inference
         context_block = (
             "\n\n--- Business Logic (rules, domain terms, edge cases — map to your classes/services) ---\n"
-            + business_text[:25000]
+            + business_text[:max_per_doc]
             + "\n\n--- Technical Design (I/O per program, loops, error handling — align packages/services) ---\n"
-            + technical_text[:25000]
+            + technical_text[:max_per_doc]
             + "\n\n--- Pseudocode (primary flow — implement this step-by-step in your design) ---\n"
-            + pseudo_text[:30000]
+            + pseudo_text[:max_per_doc]
         )
         if target == "python":
             prompt = PYTHON_DESIGN_PROMPT + context_block

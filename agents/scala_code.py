@@ -40,6 +40,31 @@ Format for each module (repeat for every module in the list):
 Modules to generate (you MUST output one ---FILE--- block per line, in this order):"""
 
 
+SINGLE_FILE_SCALA = """You are a Scala developer. Generate ONLY the code for this ONE file. Do not generate any other file.
+
+File path: %s
+Purpose: %s
+Logic to implement:
+%s
+
+Output ONLY this format (nothing else):
+---FILE: %s---
+// Complete Scala code for this file only
+---END FILE---"""
+
+SINGLE_FILE_PYTHON = """You are a Python developer. Generate ONLY the code for this ONE module. Do not generate any other file.
+
+Module path: %s
+Purpose: %s
+Logic to implement:
+%s
+
+Output ONLY this format (nothing else):
+---FILE: %s---
+# Complete Python code for this module only
+---END FILE---"""
+
+
 def _extract_files(response: str) -> list[tuple[str, str]]:
     pattern = re.compile(r"---FILE:\s*([^\n-]+)---\s*(.*?)---END FILE---", re.DOTALL)
     matches = pattern.findall(response)
@@ -64,19 +89,26 @@ def _load_design_json(context: AgentContext) -> dict | None:
     return None
 
 
-def _file_checklist(design: dict | None, target: str) -> tuple[str, str]:
-    """Build (1) numbered file list for prompt, (2) per-file mandate text (purpose + logic) for code gen."""
+def _normalize_path(p: str) -> str:
+    """Strip whitespace and optional leading 'N. ' from path."""
+    p = (p or "").strip()
+    p = re.sub(r"^\d+\.\s*", "", p)
+    return p
+
+
+def _file_list_with_mandates(design: dict | None, target: str) -> list[dict]:
+    """Build list of {path, purpose, logic} for each file to generate. Used for per-file generation."""
     ext = ".py" if target == "python" else ".scala"
     if not design:
-        return "(Parse the design above; list every .scala or .py file and generate each one.)", ""
+        return []
 
     packages = design.get("packages", [])
     file_resps = design.get("file_responsibilities", [])
     paths = []
     if file_resps:
-        paths = [fr.get("path", "").strip() for fr in file_resps if fr.get("path")]
+        paths = [_normalize_path(fr.get("path", "")) for fr in file_resps if fr.get("path")]
     if not paths and packages:
-        paths = [p.get("path", "").strip() for p in packages if p.get("path")]
+        paths = [_normalize_path(p.get("path", "")) for p in packages if p.get("path")]
     if not paths:
         case_classes = design.get("case_classes", [])
         services = design.get("services", [])
@@ -92,27 +124,43 @@ def _file_checklist(design: dict | None, target: str) -> tuple[str, str]:
             if name:
                 paths.append(f"{pkg}/{name}{ext}".replace("//", "/").strip("/"))
 
-    if not paths:
-        return "(See Package Structure in design.)", ""
-
-    checklist = "\n".join(f"  {i+1}. {p}" for i, p in enumerate(paths))
-    checklist = f"You MUST generate exactly {len(paths)} files.\n" + checklist
-
-    mandate_lines = []
-    for i, path in enumerate(paths):
-        fr = next((f for f in file_resps if (f.get("path") or "").strip() == path), None)
+    out = []
+    for path in paths:
+        if not path:
+            continue
+        fr = next((f for f in file_resps if _normalize_path(f.get("path", "")) == path), None)
         if fr:
-            mandate_lines.append(f"File {i+1}: {path}")
-            mandate_lines.append(f"  Purpose: {fr.get('purpose', '')}")
-            for logic in fr.get("logic", []):
-                mandate_lines.append(f"  Logic: - {logic}")
+            out.append({
+                "path": path,
+                "purpose": fr.get("purpose", ""),
+                "logic": fr.get("logic", []),
+            })
         else:
-            pkg = next((p for p in packages if (p.get("path") or "").strip() == path), None)
-            mandate_lines.append(f"File {i+1}: {path}")
-            mandate_lines.append(f"  Purpose: {pkg.get('description', 'Implement as per design') if pkg else 'Implement as per design'}")
-        mandate_lines.append("")
-    per_file_mandate = "\n".join(mandate_lines) if mandate_lines else ""
+            pkg = next((p for p in packages if _normalize_path(p.get("path", "")) == path), None)
+            out.append({
+                "path": path,
+                "purpose": pkg.get("description", "Implement as per design") if pkg else "Implement as per design",
+                "logic": [pkg.get("description", "Implement as per design")] if pkg else [],
+            })
+    return out
 
+
+def _file_checklist(design: dict | None, target: str) -> tuple[str, str]:
+    """Build (1) numbered file list for prompt, (2) per-file mandate text. Kept for single-call path."""
+    files = _file_list_with_mandates(design, target)
+    if not files:
+        return "(Parse the design above; list every .scala or .py file and generate each one.)", ""
+
+    paths = [f["path"] for f in files]
+    checklist = f"You MUST generate exactly {len(paths)} files.\n" + "\n".join(f"  {i+1}. {p}" for i, p in enumerate(paths))
+    mandate_lines = []
+    for i, f in enumerate(files):
+        mandate_lines.append(f"File {i+1}: {f['path']}")
+        mandate_lines.append(f"  Purpose: {f['purpose']}")
+        for logic in f.get("logic", []):
+            mandate_lines.append(f"  Logic: - {logic}")
+        mandate_lines.append("")
+    per_file_mandate = "\n".join(mandate_lines)
     return checklist, per_file_mandate
 
 
@@ -170,6 +218,31 @@ class ScalaCodeAgent(BaseAgent):
         matches = _extract_files(response)
 
         if not matches:
+            file_list = _file_list_with_mandates(design_json, target)
+            if file_list:
+                # No blocks returned; generate each file with a dedicated call
+                single_tpl = SINGLE_FILE_PYTHON if target == "python" else SINGLE_FILE_SCALA
+                for f in file_list:
+                    path = f["path"]
+                    if not path:
+                        continue
+                    purpose = f.get("purpose", "")
+                    logic_fmt = "\n".join(f"  - {x}" for x in (f.get("logic") or [])) or "  (See design.)"
+                    prompt_single = single_tpl % (path, purpose, logic_fmt, path)
+                    if design_json:
+                        prompt_single += "\n\n--- Design (structure only) ---\n" + json.dumps(design_json, indent=2)[:6000]
+                    resp = generate(prompt_single, model=model, temperature=get_temperature(self.agent_id))
+                    single_matches = _extract_files(resp)
+                    if single_matches:
+                        rel_path, code = single_matches[0]
+                        ext_f = ".py" if target == "python" else ".scala"
+                        if not rel_path.endswith(ext_f):
+                            rel_path = rel_path.rstrip("/") + ext_f
+                        rel_path = rel_path.replace("\\", "/").lstrip("/")
+                        full = code_dir / rel_path
+                        full.parent.mkdir(parents=True, exist_ok=True)
+                        full.write_text(code, encoding="utf-8")
+                return AgentResult(artifacts={"target_source_dir": str(out_dir)})
             single = re.sub(r"^---FILE:.*?---\s*", "", response)
             single = re.sub(r"\s*---END FILE---.*", "", single, flags=re.DOTALL)
             if single.strip():
@@ -194,5 +267,31 @@ class ScalaCodeAgent(BaseAgent):
             full = code_dir / rel_path
             full.parent.mkdir(parents=True, exist_ok=True)
             full.write_text(code, encoding="utf-8")
+
+        # If design lists more files than the model returned, generate each missing file with a dedicated call
+        file_list = _file_list_with_mandates(design_json, target)
+        if file_list and len(matches) < len(file_list):
+            generated_normalized = {_normalize_path(m[0]) for m in matches}
+            single_tpl = SINGLE_FILE_PYTHON if target == "python" else SINGLE_FILE_SCALA
+            for f in file_list:
+                path = f["path"]
+                if not path or _normalize_path(path) in generated_normalized:
+                    continue
+                purpose = f.get("purpose", "")
+                logic_fmt = "\n".join(f"  - {x}" for x in (f.get("logic") or [])) or "  (See design.)"
+                prompt_single = single_tpl % (path, purpose, logic_fmt, path)
+                if design_json:
+                    prompt_single += "\n\n--- Design (structure only) ---\n" + json.dumps(design_json, indent=2)[:6000]
+                resp = generate(prompt_single, model=model, temperature=get_temperature(self.agent_id))
+                single_matches = _extract_files(resp)
+                if single_matches:
+                    rel_path, code = single_matches[0]
+                    if not rel_path.endswith(ext):
+                        rel_path = rel_path.rstrip("/") + ext
+                    rel_path = rel_path.replace("\\", "/").lstrip("/")
+                    full = code_dir / rel_path
+                    full.parent.mkdir(parents=True, exist_ok=True)
+                    full.write_text(code, encoding="utf-8")
+                    generated_normalized.add(_normalize_path(path))
 
         return AgentResult(artifacts={"target_source_dir": str(out_dir)})
