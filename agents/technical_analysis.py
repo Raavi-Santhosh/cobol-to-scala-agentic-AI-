@@ -46,6 +46,54 @@ Then, on a new line, output a JSON block that downstream agents will parse. Use 
 ```"""
 
 
+# In-depth technical analysis: separate document for human understanding only. Not used by the pipeline.
+TECHNICAL_PROMPT_INDEPTH = """You are a senior legacy system engineer. Produce an IN-DEPTH technical analysis document for human readers who need to understand the system in detail. This is for understanding only; do not output any JSON.
+
+Goal: Explain in depth HOW the system works—data flow, structures, control flow, and integration points. Be thorough and precise. Reference specific COBOL lines or paragraphs where helpful.
+
+Use section titles on their own line starting with "- " (e.g. "- Data Structures and Copybooks"). End the document with: ---END---
+
+Include these sections (use the exact titles; add subsections or bullets as needed):
+
+- Executive summary
+  Summarize the system in 2–4 paragraphs: main purpose, programs, key files, and technologies (e.g. DB2, CICS, batch).
+
+- Data structures and copybooks
+  For each copybook or shared data structure: name, purpose, and key fields (level numbers, PIC clauses, redefines). How programs include or reference them. Any WORKING-STORAGE or LINKAGE SECTION layouts that are critical.
+
+- File and I/O deep dive
+  For each file: organization (sequential, indexed, etc.), record layout, key structure if any, OPEN mode, and exact READ/WRITE/REWRITE patterns. Include FD/SELECT details and any file status handling.
+
+- Paragraph-level control flow
+  For each program: list main paragraphs and the order they are performed; PERFORM range and exit conditions; any nested PERFORMs. Describe the main driver flow (e.g. 100-MAIN -> open files -> 200-READ-LOOP -> 300-PROCESS -> close).
+
+- Looping and iteration detail
+  For each loop: type (PERFORM UNTIL, VARYING, etc.), control variable, exit condition, and what happens inside (calls, I/O, condition logic). Any at-end or invalid-key handling inside loops.
+
+- Cursor, position, and state
+  Any record pointers, cursors, or position tracking: where set, where read, how advanced or reset. Subscript/index usage in tables.
+
+- Error handling and return codes
+  How errors are detected (file status, SQLCODE, etc.), where they are checked, and what happens (message, abend, return code). Any error copybook or standard return-code conventions.
+
+- Restart, checkpoint, and recovery
+  Any checkpoint/restart logic, commit/rollback, or recovery procedures.
+
+- DB2 and SQL (if applicable)
+  Connection usage, embedded SQL, cursor usage, commit points, and how SQL errors are handled.
+
+- Data flow and dependencies
+  Describe how data moves between programs (call parameters, copybooks, files). Which programs produce or consume which data.
+
+- Edge cases and special logic
+  Any at-end-of-file handling, empty-file behavior, duplicate keys, or business rules that affect control flow (e.g. skip under condition X).
+
+- Glossary or term reference (optional)
+  Short definitions of program names, file names, or domain terms used in the document.
+
+End with: ---END---"""
+
+
 def _parse_json_block(text: str) -> dict | None:
     """Extract JSON from ```json ... ``` block after ---END---."""
     try:
@@ -108,6 +156,26 @@ def _docx_structured_summary_from_json(tech: dict) -> str:
     if not lines:
         return intro + "No structured technical data extracted; see narrative sections above."
     return intro + "\n".join(lines)
+
+
+def _parse_indepth_sections(response: str) -> list[dict]:
+    """Parse in-depth narrative into title/body sections. Sections start with '- Title' on own line; end at ---END---."""
+    sections = []
+    current_title = ""
+    current_body = []
+    for line in response.split("\n"):
+        if line.strip() == "---END---":
+            break
+        if line.startswith("- ") and not line.startswith("-  "):
+            if current_title or current_body:
+                sections.append({"title": current_title or "Section", "body": "\n".join(current_body).strip()})
+            current_title = line.strip().lstrip("- ")
+            current_body = []
+        else:
+            current_body.append(line)
+    if current_title or current_body:
+        sections.append({"title": current_title or "Section", "body": "\n".join(current_body).strip()})
+    return sections if sections else [{"title": "Technical Design In-Depth", "body": response[:20000].strip()}]
 
 
 def _parse_fallback_technical(response: str) -> dict:
@@ -207,9 +275,25 @@ class TechnicalAnalysisAgent(BaseAgent):
         with open(json_path, "w") as f:
             json.dump(tech, f, indent=2)
 
-        return AgentResult(
-            artifacts={
-                "04_Technical_Design_COBOL.docx": str(docx_path),
-                "technical_analysis.json": str(json_path),
-            }
+        # In-depth document for human understanding only; separate file, does not affect pipeline
+        prompt_indepth = (
+            TECHNICAL_PROMPT_INDEPTH
+            + "\n\n--- Business Logic ---\n"
+            + business_text
+            + "\n\n--- COBOL Source ---\n"
+            + source
         )
+        response_indepth = generate(
+            prompt_indepth, model=model, temperature=get_temperature(self.agent_id)
+        )
+        sections_indepth = _parse_indepth_sections(response_indepth)
+        docx_indepth_path = out_dir / "04_Technical_Design_COBOL_InDepth.docx"
+        write_docx(sections_indepth, docx_indepth_path, title="Technical Design (COBOL) — In-Depth")
+
+        artifacts = {
+            "04_Technical_Design_COBOL.docx": str(docx_path),
+            "technical_analysis.json": str(json_path),
+        }
+        artifacts["04_Technical_Design_COBOL_InDepth.docx"] = str(docx_indepth_path)
+
+        return AgentResult(artifacts=artifacts)
